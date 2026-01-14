@@ -28,6 +28,25 @@ This makes the decoding problem significantly harder but more representative of 
 
 ## Circuit-Level vs Code-Capacity Noise
 
+```mermaid
+graph LR
+    subgraph "Code-Capacity (Simple)"
+        A[Data Qubits] -->|errors| B[Syndrome]
+        B --> C[Decoder]
+    end
+```
+
+```mermaid
+graph LR
+    subgraph "Circuit-Level (Realistic)"
+        D[Initialize] -->|reset errors| E[Gates]
+        E -->|gate errors| F[Measure]
+        F -->|meas errors| G[Repeat]
+        G --> E
+        G -->|detection events| H[Decoder]
+    end
+```
+
 | Aspect | Code-Capacity | Circuit-Level |
 |--------|---------------|---------------|
 | Error location | Data qubits only | Data + ancilla qubits |
@@ -36,50 +55,124 @@ This makes the decoding problem significantly harder but more representative of 
 | Syndrome | Direct parity check | Detection events (differences) |
 | Decoding graph | 2D (spatial) | 3D (space + time) |
 
-### Why Detection Events?
-
-In circuit-level noise, measurement errors can cause the raw syndrome to flip randomly. To handle this, we use **detection events** instead of raw syndromes:
-
-```
-Detection Event = Syndrome[round t] ⊕ Syndrome[round t-1]
-```
-
-A detection event fires (=1) when something changes between rounds. This converts measurement errors into localized events that decoders can handle.
-
 ---
 
 ## Key Concepts
 
-### 1. Detectors
+### 1. Surface Code Layout
 
-A **detector** is a parity check that should be deterministic (always 0) in the absence of errors. In a surface code memory experiment:
+```
+Rotated Surface Code (d=3)
+==========================
 
-- Each stabilizer measurement defines a detector
-- Detectors compare measurements across time (detection events)
-- For `d` rounds of a distance-`d` code: `num_detectors ≈ d × (d²-1)`
+      Z       Z
+    ◯   ◯   ◯      ◯ = Data qubit
+  X       X        X = X-stabilizer (plaquette)
+    ◯   ◯   ◯      Z = Z-stabilizer (vertex)
+      Z       Z
+    ◯   ◯   ◯
+  X       X
+```
 
-### 2. Logical Observables
+Each stabilizer measures a parity of neighboring data qubits:
+- **X-stabilizers**: Detect Z errors (bit flips in X basis)
+- **Z-stabilizers**: Detect X errors (bit flips in Z basis)
 
-A **logical observable** tracks whether a logical error has occurred. For a surface code memory experiment:
+### 2. Detection Events
 
-- Usually 1 observable (the stored logical qubit)
-- Observable = 1 means a logical error happened
-- This is the ground truth label for decoder evaluation
+In circuit-level noise, we don't use raw syndromes directly. Instead, we use **detection events** - the XOR of syndromes between consecutive rounds:
+
+```mermaid
+graph TD
+    subgraph "Round 1"
+        S1["Syndrome: [0,0,1,0]"]
+    end
+    subgraph "Round 2"
+        S2["Syndrome: [0,1,1,0]"]
+    end
+    subgraph "Round 3"
+        S3["Syndrome: [0,1,0,1]"]
+    end
+
+    S1 -->|"⊕"| D1["Detection R1: [0,0,1,0]"]
+    S1 -->|"⊕"| S2
+    S2 -->|"⊕"| D2["Detection R2: [0,1,0,0]"]
+    S2 -->|"⊕"| S3
+    S3 -->|"⊕"| D3["Detection R3: [0,0,1,1]"]
+```
+
+**Why detection events?**
+- Measurement errors cause random syndrome flips
+- Detection events localize changes in space-time
+- A detection event = 1 means "something changed here"
 
 ### 3. Detector Error Model (DEM)
 
-The DEM describes the probabilistic relationship between errors and detectors:
+The DEM describes how physical errors affect detectors:
 
-```
-error(p) D0 D1      # Error with probability p triggers detectors 0 and 1
-error(p) D2 L0      # Error triggers detector 2 AND flips logical observable
+```mermaid
+graph LR
+    subgraph "Physical Errors"
+        E1["X on q3"]
+        E2["Z on q5"]
+        E3["Meas flip"]
+    end
+
+    subgraph "Detectors"
+        D0["D0"]
+        D1["D1"]
+        D2["D2"]
+        D3["D3"]
+    end
+
+    subgraph "Logical"
+        L0["L0"]
+    end
+
+    E1 --> D0
+    E1 --> D1
+    E2 --> D2
+    E2 --> D3
+    E2 --> L0
+    E3 --> D2
 ```
 
-The DEM is a **Tanner graph** that decoders use to find the most likely error pattern.
+**DEM Syntax:**
+```
+error(0.001) D0 D1      # Error triggers detectors 0 and 1
+error(0.001) D2 D3 L0   # Error triggers D2, D3 AND logical observable
+```
+
+### 4. The Decoding Problem
+
+```mermaid
+flowchart LR
+    A["Detection Events<br/>(observed)"] --> B["Decoder"]
+    C["DEM<br/>(error model)"] --> B
+    B --> D["Predicted<br/>Observable Flip"]
+    E["Actual<br/>Observable"] --> F{"Match?"}
+    D --> F
+    F -->|Yes| G["Success ✓"]
+    F -->|No| H["Logical Error ✗"]
+```
 
 ---
 
 ## Data Generation Process
+
+```mermaid
+flowchart TD
+    A["1. Generate Stim Circuit"] --> B["Noisy surface code<br/>with gates, measurements"]
+    B --> C["2. Extract DEM"]
+    C --> D["Detector Error Model<br/>(Tanner graph)"]
+    B --> E["3. Sample Shots"]
+    E --> F["Detection Events"]
+    E --> G["Observable Flips"]
+
+    D --> H["decoder.dem"]
+    F --> I["events.01"]
+    G --> J["obs.01 (labels)"]
+```
 
 ### Step 1: Generate Noisy Circuit
 
@@ -89,32 +182,18 @@ import stim
 circuit = stim.Circuit.generated(
     "surface_code:rotated_memory_z",  # Code type
     distance=5,                        # Code distance
-    rounds=5,                          # Syndrome extraction rounds
-    after_clifford_depolarization=0.001,  # Gate error rate
-    before_measure_flip_probability=0.001, # Measurement error rate
-    after_reset_flip_probability=0.001,    # Reset error rate
+    rounds=5,                          # Syndrome rounds
+    after_clifford_depolarization=0.001,
+    before_measure_flip_probability=0.001,
+    after_reset_flip_probability=0.001,
 )
 ```
 
-This generates a complete circuit with:
-- Qubit initialization (resets)
-- Repeated syndrome extraction rounds
-- CNOT gates between data and ancilla qubits
-- Ancilla measurements
-- Detector and observable annotations
-
-### Step 2: Extract Detector Error Model
+### Step 2: Extract DEM
 
 ```python
 dem = circuit.detector_error_model(decompose_errors=True)
 ```
-
-The DEM is extracted by:
-1. Propagating each possible error through the circuit
-2. Recording which detectors it triggers
-3. Computing the probability of each error mechanism
-
-`decompose_errors=True` breaks hyperedges (errors triggering >2 detectors) into graphlike edges for matching-based decoders.
 
 ### Step 3: Sample Detection Events
 
@@ -126,9 +205,26 @@ detection_events, observable_flips = sampler.sample(
 )
 ```
 
-This simulates the noisy circuit many times, recording:
-- **Detection events**: Which detectors fired (syndrome data)
-- **Observable flips**: Whether a logical error occurred (labels)
+---
+
+## Visualizations
+
+The `diagrams/` subdirectory contains generated visualizations:
+
+### Circuit Timeline
+Shows the quantum circuit over time with all gates and measurements.
+
+![Circuit Timeline](diagrams/circuit_timeline.svg)
+
+### Detector Slice
+Shows how detectors are arranged spatially.
+
+![Detector Slice](diagrams/detector_slice.svg)
+
+### Matching Graph
+The DEM as a graph where edges represent error mechanisms.
+
+![Matching Graph](diagrams/matching_graph.svg)
 
 ---
 
@@ -136,74 +232,54 @@ This simulates the noisy circuit many times, recording:
 
 ### `.stim` - Stim Circuit
 
-Human-readable circuit description:
-
 ```
 QUBIT_COORDS(1, 1) 1          # Qubit 1 at position (1,1)
 R 1 3 5 8 10                   # Reset qubits
-X_ERROR(0.001) 1 3 5 8 10      # Apply X errors with p=0.001
+X_ERROR(0.001) 1 3 5 8 10      # X errors with p=0.001
 H 2 11 16                      # Hadamard gates
 CX 2 3 16 17                   # CNOT gates
 M 2 9 11                       # Measurements
-DETECTOR(2, 2, 0) rec[-7]      # Detector from measurement record
+DETECTOR(2, 2, 0) rec[-7]      # Detector definition
 OBSERVABLE_INCLUDE(0) rec[-1]  # Logical observable
 ```
 
 ### `.dem` - Detector Error Model
 
-Probabilistic error model for decoders:
-
 ```
 error(0.00193) D0              # Single-detector error
 error(0.00193) D0 D1           # Two-detector error (edge)
 error(0.00411) D1 L0           # Error affecting logical observable
-error(0.00053) D2 D3 ^ D6      # Decomposed hyperedge
 detector(1, 1, 0) D0           # Detector coordinates
 ```
 
-**Syntax:**
-- `D#`: Detector index
-- `L#`: Logical observable index
-- `^`: Separator for hyperedge decomposition
-- Coordinates help visualize the decoding graph
-
-### `_events.01` - Detection Events (Text)
-
-One line per shot, one character per detector:
+### `_events.01` - Detection Events
 
 ```
 000000000000000000000000    # No detectors fired
 000000010000000000100000    # Detectors 7 and 19 fired
-110000000000000000000001    # Detectors 0, 1, and 23 fired
 ```
-
-- `0` = detector did not fire
-- `1` = detector fired (something changed)
-- Line length = number of detectors
+- One line per shot
+- One character per detector
+- `0` = quiet, `1` = fired
 
 ### `_events.b8` - Detection Events (Binary)
 
-Same data as `.01` but packed into bytes (8 detectors per byte, little-endian). More space-efficient for large datasets.
+Same data packed into bytes (8 detectors per byte, little-endian).
 
 ```python
-import numpy as np
+# Loading .b8 format
 events = np.fromfile("events.b8", dtype=np.uint8)
 events = np.unpackbits(events, bitorder='little')
 events = events.reshape(num_shots, -1)[:, :num_detectors]
 ```
 
-### `_obs.01` - Observable Flips
-
-One line per shot, one character per observable:
+### `_obs.01` - Observable Flips (Labels)
 
 ```
 0    # No logical error
 0    # No logical error
-1    # Logical error occurred!
-0    # No logical error
+1    # Logical error!
 ```
-
-This is the **ground truth** for evaluating decoder accuracy.
 
 ### `_metadata.json` - Dataset Metadata
 
@@ -213,19 +289,10 @@ This is the **ground truth** for evaluating decoder accuracy.
   "distance": 5,
   "rounds": 5,
   "p_error": 0.001,
-  "noise_model": "depolarizing",
   "num_shots": 100000,
   "num_detectors": 120,
   "num_observables": 1,
-  "logical_error_rate": 0.0558,
-  "seed": 42,
-  "files": {
-    "circuit": "surface_d5_r5_p0.0010.stim",
-    "dem": "surface_d5_r5_p0.0010.dem",
-    "events_01": "surface_d5_r5_p0.0010_events.01",
-    "events_b8": "surface_d5_r5_p0.0010_events.b8",
-    "observables": "surface_d5_r5_p0.0010_obs.01"
-  }
+  "logical_error_rate": 0.0558
 }
 ```
 
@@ -241,23 +308,19 @@ surface_d{distance}_r{rounds}_p{error_rate}.*
 
 Example: `surface_d5_r5_p0.0010` = distance 5, 5 rounds, p=0.001
 
-### Generated Datasets
+### Detector Count
 
-| Dataset | Distance | Rounds | Detectors | Error Rate | Shots |
-|---------|----------|--------|-----------|------------|-------|
-| d3_r3_p0.0010 | 3 | 3 | 24 | 0.1% | 10,000 |
-| d3_r3_p0.0050 | 3 | 3 | 24 | 0.5% | 10,000 |
-| d3_r3_p0.0100 | 3 | 3 | 24 | 1.0% | 10,000 |
-| d5_r5_p0.0010 | 5 | 5 | 120 | 0.1% | 10,000 |
-| d5_r5_p0.0050 | 5 | 5 | 120 | 0.5% | 10,000 |
-| d5_r5_p0.0100 | 5 | 5 | 120 | 1.0% | 10,000 |
-
-### Detector Count Formula
-
-For a rotated surface code with `d` distance and `r` rounds:
+For distance `d` and `r` rounds:
 ```
-num_detectors = (d² - 1) × r + boundary_corrections
+num_detectors ≈ (d² - 1) × r
 ```
+
+| Distance | Rounds | Detectors |
+|----------|--------|-----------|
+| 3 | 3 | 24 |
+| 5 | 5 | 120 |
+| 7 | 7 | 336 |
+| 9 | 9 | 720 |
 
 ---
 
@@ -273,37 +336,34 @@ import json
 with open("surface_d5_r5_p0.0010_metadata.json") as f:
     meta = json.load(f)
 
-# Load detection events (.01 format)
+# Load detection events
 with open("surface_d5_r5_p0.0010_events.01") as f:
     events = np.array([[int(c) for c in line.strip()]
                        for line in f], dtype=np.uint8)
 
-# Load observable flips
+# Load labels
 with open("surface_d5_r5_p0.0010_obs.01") as f:
     labels = np.array([int(line.strip()) for line in f], dtype=np.uint8)
 
-print(f"Events shape: {events.shape}")  # (10000, 120)
-print(f"Labels shape: {labels.shape}")  # (10000,)
+print(f"Shape: {events.shape}")  # (num_shots, num_detectors)
 ```
 
-### 2. Use with PyMatching
+### 2. Decode with PyMatching
 
 ```python
 import stim
 from pymatching import Matching
 
-# Load DEM
+# Load DEM and create decoder
 dem = stim.DetectorErrorModel.from_file("surface_d5_r5_p0.0010.dem")
-
-# Create decoder
 matcher = Matching.from_detector_error_model(dem)
 
 # Decode
 predictions = matcher.decode_batch(events)
 
-# Evaluate accuracy
-errors = np.sum(predictions != labels)
-print(f"Logical error rate: {errors / len(labels):.4f}")
+# Evaluate
+logical_errors = np.sum(predictions != labels)
+print(f"Error rate: {logical_errors / len(labels):.4f}")
 ```
 
 ### 3. Use with Tesseract Decoder
@@ -313,65 +373,75 @@ print(f"Logical error rate: {errors / len(labels):.4f}")
     --dem surface_d5_r5_p0.0010.dem \
     --in surface_d5_r5_p0.0010_events.01 \
     --in-format 01 \
-    --out predictions.01 \
-    --out-format 01
+    --out predictions.01
 ```
 
-### 4. Train a Neural Network Decoder
+### 4. Train a Neural Network
 
 ```python
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-# Prepare data
 X = torch.tensor(events, dtype=torch.float32)
-y = torch.tensor(labels, dtype=torch.float32)
+y = torch.tensor(labels, dtype=torch.float32).unsqueeze(1)
 
-# Create dataset
 dataset = TensorDataset(X, y)
 loader = DataLoader(dataset, batch_size=256, shuffle=True)
 
-# Train your model...
+# Define and train your model...
 ```
 
 ---
 
 ## Generating More Data
 
-### Quick Mode (10k shots, d=3,5)
 ```bash
+# Quick mode (10k shots)
 make circuit-data-quick
-```
 
-### Full Mode (100k shots, d=3,5,7,9)
-```bash
+# Full mode (100k shots)
 make circuit-data
-```
 
-### Custom Parameters
-```bash
+# Custom parameters
 make circuit-data-custom D=7 R=7 P=0.002 N=500000
+
+# Generate diagrams
+python python/generate_diagrams.py
 ```
 
-### Direct Python Usage
-```bash
-python python/generate_circuit_data.py \
-    --distance 9 \
-    --rounds 9 \
-    --p-error 0.005 \
-    --shots 1000000 \
-    --noise-model depolarizing \
-    --output-dir benchmark/circuit_data
+---
+
+## Understanding the DEM
+
+Here's how physical errors map to the DEM:
+
 ```
+Physical Error               DEM Entry                  Meaning
+──────────────               ─────────                  ───────
+
+X error on data qubit   →    error(p) D0 D1         Flips 2 adjacent
+                                                     Z-stabilizers
+
+Z error on data qubit   →    error(p) D2 D3         Flips 2 adjacent
+                                                     X-stabilizers
+
+Measurement error       →    error(p) D4            Flips 1 detector
+                                                     (in time)
+
+Error on logical path   →    error(p) D5 L0         Flips detector AND
+                                                     logical observable
+```
+
+The decoder's job: Given which detectors fired, find the minimum-weight set of errors that explains them, then predict whether L0 was flipped.
 
 ---
 
 ## References
 
-1. **Stim**: [github.com/quantumlib/Stim](https://github.com/quantumlib/Stim) - Fast stabilizer circuit simulator
-2. **Tesseract**: [github.com/quantumlib/tesseract-decoder](https://github.com/quantumlib/tesseract-decoder) - Search-based QEC decoder
-3. **PyMatching**: [github.com/oscarhiggott/PyMatching](https://github.com/oscarhiggott/PyMatching) - MWPM decoder
-4. **DEM Format**: [Stim DEM documentation](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md)
+1. [Stim](https://github.com/quantumlib/Stim) - Fast stabilizer circuit simulator
+2. [Tesseract](https://github.com/quantumlib/tesseract-decoder) - Search-based QEC decoder
+3. [PyMatching](https://github.com/oscarhiggott/PyMatching) - MWPM decoder
+4. [DEM Format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md)
 
 ---
 

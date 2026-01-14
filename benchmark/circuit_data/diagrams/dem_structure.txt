@@ -1,0 +1,40 @@
+Detector Error Model for d=3, r=2
+==================================================
+
+Number of detectors: 16
+Number of observables: 1
+Number of error mechanisms: 141
+
+First 30 error mechanisms:
+--------------------------------------------------
+error(0.0012662) D0
+error(0.0012662) D0 D1
+error(0.00226367) D0 D8
+error(0.0012662) D1 D2
+error(0.00239645) D1 D5
+error(0.000133387) D1 D5 ^ D4
+error(0.000400053) D1 D8
+error(0.000133387) D1 D8 ^ D4
+error(0.00279459) D1 L0
+error(0.00272826) D2
+error(0.00153227) D2 D3
+error(0.000533333) D2 D3 ^ D6
+error(0.00059996) D2 D5
+error(0.000200067) D2 D5 ^ D6
+error(0.000133387) D2 D5 ^ D6 D9
+error(6.66978e-05) D2 D5 ^ D9
+error(6.66978e-05) D2 D5 ^ D9 ^ D6
+error(6.66978e-05) D2 D8
+error(6.66978e-05) D2 D8 ^ D6
+error(6.66978e-05) D2 D8 ^ D9
+error(6.66978e-05) D2 D8 ^ D9 ^ D6
+error(0.00226367) D2 D10
+error(0.000133387) D2 D10 ^ D6
+error(0.000133387) D2 D10 ^ D6 D9
+error(0.000133387) D3 D5
+error(0.000133387) D3 D5 ^ D6
+error(0.00213085) D3 D7
+error(0.000133387) D3 D7 ^ D6
+error(0.000266738) D3 D10
+error(0.000266738) D3 D10 ^ D6
+...

@@ -1,0 +1,11 @@
+Rotated Surface Code (d=3)
+
+              
+  ◯   ◯   ◯   
+    X   Z     
+  ◯   ◯   ◯   
+    Z   X     
+  ◯   ◯   ◯   
+              
+
+Legend: ◯ = Data qubit, X = X-stabilizer, Z = Z-stabilizer
