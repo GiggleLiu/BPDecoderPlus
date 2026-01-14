@@ -1,0 +1,226 @@
+{
+  "distances": [
+    3,
+    5,
+    7,
+    9
+  ],
+  "error_rates": [
+    0.01,
+    0.02,
+    0.03,
+    0.04,
+    0.05,
+    0.06,
+    0.07,
+    0.08,
+    0.09,
+    0.1,
+    0.12,
+    0.15
+  ],
+  "data": {
+    "5": {
+      "0.12": {
+        "std_error": 0.011822690049223147,
+        "logical_error_rate": 0.168
+      },
+      "0.04": {
+        "std_error": 0.003443254274665175,
+        "logical_error_rate": 0.012
+      },
+      "0.01": {
+        "std_error": 0.0009994998749374609,
+        "logical_error_rate": 0.001
+      },
+      "0.08": {
+        "std_error": 0.008627803892068943,
+        "logical_error_rate": 0.081
+      },
+      "0.1": {
+        "std_error": 0.01001154333756789,
+        "logical_error_rate": 0.113
+      },
+      "0.09": {
+        "std_error": 0.00935900635751467,
+        "logical_error_rate": 0.097
+      },
+      "0.06": {
+        "std_error": 0.005969170796685248,
+        "logical_error_rate": 0.037
+      },
+      "0.03": {
+        "std_error": 0.0022304708023195463,
+        "logical_error_rate": 0.005
+      },
+      "0.05": {
+        "std_error": 0.004839834707921336,
+        "logical_error_rate": 0.024
+      },
+      "0.07": {
+        "std_error": 0.007147307185227175,
+        "logical_error_rate": 0.054
+      },
+      "0.15": {
+        "std_error": 0.013600551459407815,
+        "logical_error_rate": 0.245
+      },
+      "0.02": {
+        "std_error": 0.001729450779872038,
+        "logical_error_rate": 0.003
+      }
+    },
+    "7": {
+      "0.12": {
+        "std_error": 0.012528966437819204,
+        "logical_error_rate": 0.195
+      },
+      "0.04": {
+        "std_error": 0.005216895628628198,
+        "logical_error_rate": 0.028
+      },
+      "0.01": {
+        "std_error": 0.0009994998749374609,
+        "logical_error_rate": 0.001
+      },
+      "0.08": {
+        "std_error": 0.00900438781928011,
+        "logical_error_rate": 0.089
+      },
+      "0.1": {
+        "std_error": 0.011444430960078356,
+        "logical_error_rate": 0.155
+      },
+      "0.09": {
+        "std_error": 0.010458250331675944,
+        "logical_error_rate": 0.125
+      },
+      "0.06": {
+        "std_error": 0.006122009474020765,
+        "logical_error_rate": 0.039
+      },
+      "0.03": {
+        "std_error": 0.004204283529925164,
+        "logical_error_rate": 0.018
+      },
+      "0.05": {
+        "std_error": 0.00512552436341883,
+        "logical_error_rate": 0.027
+      },
+      "0.07": {
+        "std_error": 0.008771772910877254,
+        "logical_error_rate": 0.084
+      },
+      "0.15": {
+        "std_error": 0.014532412050310162,
+        "logical_error_rate": 0.303
+      },
+      "0.02": {
+        "std_error": 0.002442130217658346,
+        "logical_error_rate": 0.006
+      }
+    },
+    "9": {
+      "0.12": {
+        "std_error": 0.013388203763014663,
+        "logical_error_rate": 0.234
+      },
+      "0.04": {
+        "std_error": 0.0063431853196954605,
+        "logical_error_rate": 0.042
+      },
+      "0.01": {
+        "std_error": 0.001729450779872038,
+        "logical_error_rate": 0.003
+      },
+      "0.08": {
+        "std_error": 0.009486832980505138,
+        "logical_error_rate": 0.1
+      },
+      "0.1": {
+        "std_error": 0.012015614840697915,
+        "logical_error_rate": 0.175
+      },
+      "0.09": {
+        "std_error": 0.010599952830083727,
+        "logical_error_rate": 0.129
+      },
+      "0.06": {
+        "std_error": 0.006692607862410586,
+        "logical_error_rate": 0.047
+      },
+      "0.03": {
+        "std_error": 0.003843826218756514,
+        "logical_error_rate": 0.015
+      },
+      "0.05": {
+        "std_error": 0.007021111023192838,
+        "logical_error_rate": 0.052
+      },
+      "0.07": {
+        "std_error": 0.008226238508577295,
+        "logical_error_rate": 0.073
+      },
+      "0.15": {
+        "std_error": 0.01468928180681411,
+        "logical_error_rate": 0.315
+      },
+      "0.02": {
+        "std_error": 0.0026364749192814255,
+        "logical_error_rate": 0.007
+      }
+    },
+    "3": {
+      "0.12": {
+        "std_error": 0.011291589790636216,
+        "logical_error_rate": 0.15
+      },
+      "0.04": {
+        "std_error": 0.003843826218756514,
+        "logical_error_rate": 0.015
+      },
+      "0.01": {
+        "std_error": 0.0014127986409959489,
+        "logical_error_rate": 0.002
+      },
+      "0.08": {
+        "std_error": 0.008329165624478841,
+        "logical_error_rate": 0.075
+      },
+      "0.1": {
+        "std_error": 0.010313049985334114,
+        "logical_error_rate": 0.121
+      },
+      "0.09": {
+        "std_error": 0.009315793041926168,
+        "logical_error_rate": 0.096
+      },
+      "0.06": {
+        "std_error": 0.006892024376045111,
+        "logical_error_rate": 0.05
+      },
+      "0.03": {
+        "std_error": 0.0026364749192814255,
+        "logical_error_rate": 0.007
+      },
+      "0.05": {
+        "std_error": 0.006485676526007136,
+        "logical_error_rate": 0.044
+      },
+      "0.07": {
+        "std_error": 0.00720936890441875,
+        "logical_error_rate": 0.055
+      },
+      "0.15": {
+        "std_error": 0.013388203763014663,
+        "logical_error_rate": 0.234
+      },
+      "0.02": {
+        "std_error": 0.003146426544510455,
+        "logical_error_rate": 0.01
+      }
+    }
+  },
+  "n_trials": 1000,
+  "decoder": "BPOSD"
+}
