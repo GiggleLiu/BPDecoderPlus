@@ -10,7 +10,7 @@
 #   make quick      - Run quick version (fewer trials)
 #   make clean      - Remove generated files
 
-.PHONY: all setup test benchmark visualize quick clean help
+.PHONY: all setup test benchmark visualize quick clean help circuit-data
 
 # Default target
 all: test benchmark visualize
@@ -20,13 +20,19 @@ help:
 	@echo "BPDecoderPlus - Winter School Project"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  make setup      - Install Julia and Python dependencies"
-	@echo "  make test       - Run unit tests"
-	@echo "  make benchmark  - Generate benchmark data (full)"
-	@echo "  make quick      - Run quick benchmark (fewer trials)"
-	@echo "  make visualize  - Create plots from benchmark data"
-	@echo "  make all        - Run full pipeline"
-	@echo "  make clean      - Remove generated files"
+	@echo "  make setup           - Install Julia and Python dependencies"
+	@echo "  make test            - Run unit tests"
+	@echo "  make benchmark       - Generate benchmark data (full)"
+	@echo "  make quick           - Run quick benchmark (fewer trials)"
+	@echo "  make visualize       - Create plots from benchmark data"
+	@echo "  make all             - Run full pipeline"
+	@echo "  make circuit-data    - Generate DEM + syndrome datasets (Stim)"
+	@echo "  make clean           - Remove generated files"
+	@echo ""
+	@echo "Circuit-level data generation:"
+	@echo "  make circuit-data           - Full dataset (d=3,5,7,9, 100k shots)"
+	@echo "  make circuit-data-quick     - Quick dataset (d=3,5, 10k shots)"
+	@echo "  make circuit-data-custom D=5 R=5 P=0.001 N=100000"
 	@echo ""
 	@echo "Quick start:"
 	@echo "  make setup && make quick && make visualize"
@@ -81,6 +87,7 @@ visualize:
 clean:
 	@echo ">>> Cleaning generated files..."
 	rm -rf benchmark/data/*.json
+	rm -rf benchmark/circuit_data/
 	rm -rf results/plots/*.png
 	rm -rf Manifest.toml
 	@echo ">>> Clean complete"
@@ -111,6 +118,26 @@ benchmark-bposd:
 compare:
 	@echo ">>> Comparing decoders..."
 	julia --project=. -e 'using BPDecoderPlus; compare_decoders([3,5], [0.02,0.05,0.08], 100)'
+
+# Circuit-level data generation (DEM + syndrome datasets)
+circuit-data:
+	@echo ">>> Generating circuit-level datasets (DEM + syndromes)..."
+	@mkdir -p benchmark/circuit_data
+	python python/generate_circuit_data.py
+	@echo ">>> Circuit data saved to benchmark/circuit_data/"
+
+circuit-data-quick:
+	@echo ">>> Generating circuit-level datasets (quick mode)..."
+	@mkdir -p benchmark/circuit_data
+	python python/generate_circuit_data.py --quick
+	@echo ">>> Circuit data saved to benchmark/circuit_data/"
+
+circuit-data-custom:
+	@echo ">>> Generating custom circuit-level dataset..."
+	@echo "    Usage: make circuit-data-custom D=5 R=5 P=0.001 N=100000"
+	@mkdir -p benchmark/circuit_data
+	python python/generate_circuit_data.py --distance $(D) --rounds $(R) --p-error $(P) --shots $(N)
+	@echo ">>> Circuit data saved to benchmark/circuit_data/"
 
 # Circuit visualization using Stim
 visualize-circuit:

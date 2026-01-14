@@ -1,0 +1,120 @@
+{
+  "datasets": [
+    {
+      "code": "surface_code:rotated_memory_z",
+      "distance": 3,
+      "rounds": 3,
+      "p_error": 0.001,
+      "noise_model": "depolarizing",
+      "num_shots": 10000,
+      "num_detectors": 24,
+      "num_observables": 1,
+      "logical_error_rate": 0.0206,
+      "seed": 42,
+      "files": {
+        "circuit": "surface_d3_r3_p0.0010.stim",
+        "dem": "surface_d3_r3_p0.0010.dem",
+        "events_01": "surface_d3_r3_p0.0010_events.01",
+        "events_b8": "surface_d3_r3_p0.0010_events.b8",
+        "observables": "surface_d3_r3_p0.0010_obs.01"
+      }
+    },
+    {
+      "code": "surface_code:rotated_memory_z",
+      "distance": 3,
+      "rounds": 3,
+      "p_error": 0.005,
+      "noise_model": "depolarizing",
+      "num_shots": 10000,
+      "num_detectors": 24,
+      "num_observables": 1,
+      "logical_error_rate": 0.1031,
+      "seed": 42,
+      "files": {
+        "circuit": "surface_d3_r3_p0.0050.stim",
+        "dem": "surface_d3_r3_p0.0050.dem",
+        "events_01": "surface_d3_r3_p0.0050_events.01",
+        "events_b8": "surface_d3_r3_p0.0050_events.b8",
+        "observables": "surface_d3_r3_p0.0050_obs.01"
+      }
+    },
+    {
+      "code": "surface_code:rotated_memory_z",
+      "distance": 3,
+      "rounds": 3,
+      "p_error": 0.01,
+      "noise_model": "depolarizing",
+      "num_shots": 10000,
+      "num_detectors": 24,
+      "num_observables": 1,
+      "logical_error_rate": 0.1841,
+      "seed": 42,
+      "files": {
+        "circuit": "surface_d3_r3_p0.0100.stim",
+        "dem": "surface_d3_r3_p0.0100.dem",
+        "events_01": "surface_d3_r3_p0.0100_events.01",
+        "events_b8": "surface_d3_r3_p0.0100_events.b8",
+        "observables": "surface_d3_r3_p0.0100_obs.01"
+      }
+    },
+    {
+      "code": "surface_code:rotated_memory_z",
+      "distance": 5,
+      "rounds": 5,
+      "p_error": 0.001,
+      "noise_model": "depolarizing",
+      "num_shots": 10000,
+      "num_detectors": 120,
+      "num_observables": 1,
+      "logical_error_rate": 0.0558,
+      "seed": 42,
+      "files": {
+        "circuit": "surface_d5_r5_p0.0010.stim",
+        "dem": "surface_d5_r5_p0.0010.dem",
+        "events_01": "surface_d5_r5_p0.0010_events.01",
+        "events_b8": "surface_d5_r5_p0.0010_events.b8",
+        "observables": "surface_d5_r5_p0.0010_obs.01"
+      }
+    },
+    {
+      "code": "surface_code:rotated_memory_z",
+      "distance": 5,
+      "rounds": 5,
+      "p_error": 0.005,
+      "noise_model": "depolarizing",
+      "num_shots": 10000,
+      "num_detectors": 120,
+      "num_observables": 1,
+      "logical_error_rate": 0.2271,
+      "seed": 42,
+      "files": {
+        "circuit": "surface_d5_r5_p0.0050.stim",
+        "dem": "surface_d5_r5_p0.0050.dem",
+        "events_01": "surface_d5_r5_p0.0050_events.01",
+        "events_b8": "surface_d5_r5_p0.0050_events.b8",
+        "observables": "surface_d5_r5_p0.0050_obs.01"
+      }
+    },
+    {
+      "code": "surface_code:rotated_memory_z",
+      "distance": 5,
+      "rounds": 5,
+      "p_error": 0.01,
+      "noise_model": "depolarizing",
+      "num_shots": 10000,
+      "num_detectors": 120,
+      "num_observables": 1,
+      "logical_error_rate": 0.3662,
+      "seed": 42,
+      "files": {
+        "circuit": "surface_d5_r5_p0.0100.stim",
+        "dem": "surface_d5_r5_p0.0100.dem",
+        "events_01": "surface_d5_r5_p0.0100_events.01",
+        "events_b8": "surface_d5_r5_p0.0100_events.b8",
+        "observables": "surface_d5_r5_p0.0100_obs.01"
+      }
+    }
+  ],
+  "noise_model": "depolarizing",
+  "seed": 42
+}
