@@ -1,0 +1,14 @@
+.DS_Store
+.ipynb_checkpoints/
+Manifest.toml
+.vscode/
+*.aux
+*.fls
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.fdb_latexmk
+*.synctex.gz
+note/belief_propagation_qec_plan.pdf
