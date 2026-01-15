@@ -1,6 +1,9 @@
 # Circuit-Level Syndrome Datasets
 
-This directory contains circuit-level syndrome datasets for quantum error correction decoder benchmarking. The data is generated using [Stim](https://github.com/quantumlib/Stim), Google's fast stabilizer circuit simulator.
+This directory contains circuit-level syndrome datasets for quantum error correction decoder benchmarking:
+
+1. **Standard datasets** (`surface_*`): Generated using [Stim](https://github.com/quantumlib/Stim)
+2. **Atom loss datasets** (`atomloss_*`): Generated using [TensorQEC.jl](https://github.com/nzy1997/TensorQEC.jl)
 
 ## Table of Contents
 
@@ -11,6 +14,7 @@ This directory contains circuit-level syndrome datasets for quantum error correc
 5. [File Formats](#file-formats)
 6. [Dataset Structure](#dataset-structure)
 7. [Usage Examples](#usage-examples)
+8. [Atom Loss Datasets](#atom-loss-datasets)
 
 ---
 
@@ -436,12 +440,119 @@ The decoder's job: Given which detectors fired, find the minimum-weight set of e
 
 ---
 
+---
+
+## Atom Loss Datasets
+
+The `atomloss_*` datasets model **atom loss errors** relevant to neutral atom quantum computers. These are generated using TensorQEC.jl.
+
+### Atom Loss Model
+
+```mermaid
+flowchart LR
+    A["Qubit"] -->|"p_loss"| B{"Lost?"}
+    B -->|No| C["Normal Operation"]
+    B -->|Yes| D["Random Pauli Error"]
+    D --> E["Qubit Marked as Lost"]
+```
+
+In neutral atom systems:
+- Atoms can be **physically lost** from optical traps during gate operations
+- Lost qubits contribute **random errors** (erasure → depolarizing)
+- Loss can be **detected** via fluorescence imaging
+- Loss-aware decoders can use this information
+
+### Atom Loss File Formats
+
+Each atom loss dataset includes:
+
+| File | Description |
+|------|-------------|
+| `*_events.01` | Detection events (same as Stim format) |
+| `*_obs.01` | Observable flips (labels) |
+| `*_loss.01` | **Loss mask** - which qubits were lost |
+| `*_metadata.json` | Parameters and statistics |
+
+### Loss Mask Format (`*_loss.01`)
+
+```
+000000000    # No qubits lost (d=3, 9 qubits)
+001000100    # Qubits 2 and 6 were lost
+111000000    # Qubits 0, 1, 2 were lost
+```
+
+- One line per shot
+- One character per data qubit
+- `0` = qubit survived, `1` = qubit was lost
+
+### Atom Loss Metadata Example
+
+```json
+{
+  "code": "surface_code:rotated_memory_z",
+  "distance": 5,
+  "rounds": 5,
+  "p_error": 0.001,
+  "p_loss_1q": 0.01,
+  "p_loss_2q": 0.02,
+  "num_shots": 10000,
+  "logical_error_rate": 0.6851,
+  "avg_loss_rate": 0.3331,
+  "generator": "TensorQEC (atom loss)"
+}
+```
+
+### Using Atom Loss Data
+
+```python
+import numpy as np
+
+# Load detection events
+with open("atomloss_d5_r5_p0.0010_loss0.0100_events.01") as f:
+    events = np.array([[int(c) for c in line.strip()] for line in f])
+
+# Load loss mask
+with open("atomloss_d5_r5_p0.0010_loss0.0100_loss.01") as f:
+    loss_mask = np.array([[int(c) for c in line.strip()] for line in f])
+
+# Load labels
+with open("atomloss_d5_r5_p0.0010_loss0.0100_obs.01") as f:
+    labels = np.array([int(line.strip()) for line in f])
+
+# For loss-aware decoding:
+# - Use loss_mask to identify which qubits have erasure errors
+# - Modify DEM weights or use erasure-aware decoder
+```
+
+### Loss-Aware Decoding Strategies
+
+1. **Naive decoding**: Ignore loss information (baseline)
+2. **Erasure decoding**: Treat lost qubits as known erasures
+3. **Supercheck construction**: Combine stabilizers that share lost qubits
+4. **Adaptive decoding**: Modify decoder graph based on loss pattern
+
+Reference: [arXiv:2412.07841](https://arxiv.org/abs/2412.07841) - Quantum Error Correction resilient against Atom Loss
+
+### Generating Atom Loss Data
+
+```bash
+# Quick mode (10k shots, d=3,5)
+make atomloss-data-quick
+
+# Full mode (50k shots, d=3,5,7)
+make atomloss-data
+```
+
+---
+
 ## References
 
 1. [Stim](https://github.com/quantumlib/Stim) - Fast stabilizer circuit simulator
-2. [Tesseract](https://github.com/quantumlib/tesseract-decoder) - Search-based QEC decoder
-3. [PyMatching](https://github.com/oscarhiggott/PyMatching) - MWPM decoder
-4. [DEM Format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md)
+2. [TensorQEC.jl](https://github.com/nzy1997/TensorQEC.jl) - Tensor network QEC library
+3. [Tesseract](https://github.com/quantumlib/tesseract-decoder) - Search-based QEC decoder
+4. [PyMatching](https://github.com/oscarhiggott/PyMatching) - MWPM decoder
+5. [DEM Format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md)
+6. [Atom Loss QEC](https://arxiv.org/abs/2412.07841) - Atom loss error correction
 
 ---
 
