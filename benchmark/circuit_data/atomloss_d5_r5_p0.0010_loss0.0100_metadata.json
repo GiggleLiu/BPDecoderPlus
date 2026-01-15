@@ -1,0 +1,21 @@
+{
+  "num_shots": 10000,
+  "code": "surface_code:rotated_memory_z",
+  "p_loss_2q": 0.02,
+  "logical_error_rate": 0.6851,
+  "distance": 5,
+  "p_loss_1q": 0.01,
+  "files": {
+    "events_01": "atomloss_d5_r5_p0.0010_loss0.0100_events.01",
+    "observables": "atomloss_d5_r5_p0.0010_loss0.0100_obs.01",
+    "loss_mask": "atomloss_d5_r5_p0.0010_loss0.0100_loss.01"
+  },
+  "p_meas": 0.001,
+  "generator": "TensorQEC (atom loss)",
+  "p_error": 0.001,
+  "avg_loss_rate": 0.333116,
+  "rounds": 5,
+  "num_detectors": 120,
+  "num_qubits": 25,
+  "num_observables": 1
+}

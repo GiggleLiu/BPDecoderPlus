@@ -139,6 +139,19 @@ circuit-data-custom:
 	python python/generate_circuit_data.py --distance $(D) --rounds $(R) --p-error $(P) --shots $(N)
 	@echo ">>> Circuit data saved to benchmark/circuit_data/"
 
+# Atom loss datasets using TensorQEC
+atomloss-data:
+	@echo ">>> Generating atom loss syndrome datasets (TensorQEC)..."
+	@mkdir -p benchmark/circuit_data
+	julia --project=. benchmark/generate_atom_loss_syndromes.jl
+	@echo ">>> Atom loss data saved to benchmark/circuit_data/"
+
+atomloss-data-quick:
+	@echo ">>> Generating atom loss syndrome datasets (quick mode)..."
+	@mkdir -p benchmark/circuit_data
+	julia --project=. benchmark/generate_atom_loss_syndromes.jl --quick
+	@echo ">>> Atom loss data saved to benchmark/circuit_data/"
+
 # Circuit visualization using Stim
 visualize-circuit:
 	@echo ">>> Generating circuit visualization with Stim..."
