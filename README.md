@@ -7,8 +7,10 @@ A winter school project on circuit-level decoding of surface codes using belief 
 | Level | Task | Description |
 |-------|------|-------------|
 | **Basic** | MLE Decoder | Reproduce the integer programming (MLE) decoder as the baseline |
-| **Challenge** | BP Decoder | Develop belief propagation based decoders and compare performance |
-| **Extension** | Atom Loss | Handle atom loss errors in neutral atom systems |
+| **Challenge** | Atom Loss | Handle atom loss errors in neutral atom systems |
+| **Extension** | QEC Visualization | https://github.com/nzy1997/qec-thrust |
+
+Note: we also want to explore the boundary of vibe coding, which may lead to a scipost paper.
 
 ## Learning Objectives
 
@@ -23,6 +25,63 @@ After completing this project, students will:
 - **Programming**: Julia basics, familiarity with Python for plotting
 - **Mathematics**: Linear algebra, probability theory
 - **QEC Background**: Stabilizer formalism, surface codes (helpful but not required)
+
+## Key Concepts
+
+### Detection Events
+
+In circuit-level quantum error correction, we don't use raw syndrome measurements directly. Instead, we use **detection events** — the XOR (difference) between consecutive syndrome measurements.
+
+**Why detection events instead of raw syndromes?**
+
+In code-capacity noise (simplified model), syndromes directly indicate errors. But in circuit-level noise:
+- Measurement errors exist and can randomly flip syndrome values
+- A syndrome value of 1 could mean "real data error" or "measurement error"
+- Detection events localize changes in space-time
+
+```
+Round 1 syndrome: [0, 0, 1, 0]
+Round 2 syndrome: [0, 1, 1, 0]
+                   ───────────
+Detection event:  [0, 1, 0, 0]  ← Only the CHANGE matters
+```
+
+A detection event = 1 means "something happened in this space-time region" (data qubit error or measurement error). The decoder's job is to figure out which.
+
+### Observable Flip
+
+An **observable flip** indicates whether the logical qubit's value changed from initialization to final measurement.
+
+For a surface code doing Z-memory:
+- The logical observable Z̄ is a product of Z operators along a path
+- Initialize in |0⟩_L (eigenstate of Z̄ with eigenvalue +1)
+- If final measurement gives Z̄ = -1, that's an observable flip → logical error
+
+**The decoding problem:**
+
+```
+Physical errors occur during circuit execution
+                    ↓
+Input:  Detection events (what we observe)
+                    ↓
+                 Decoder
+                    ↓
+Output: Predicted observable flip (0 or 1)
+                    ↓
+        Compare with actual observable flip
+                    ↓
+           Match → Success
+           Mismatch → Logical error
+```
+
+In the Detector Error Model (DEM), errors are annotated with which detectors and observables they affect:
+
+```
+error(0.001) D0 D1       # Triggers detectors 0,1 but NOT the observable
+error(0.001) D2 D3 L0    # Triggers detectors 2,3 AND flips logical observable L0
+```
+
+Errors that include `L0` form logical error chains — these are what the decoder must identify.
 
 ## Must-Read Papers
 
