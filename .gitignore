@@ -1,8 +1,33 @@
+# macOS
 .DS_Store
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Julia
 Manifest.toml
+
+# IDE
 .vscode/
+.idea/
+
+# Python
 .venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.uv/
+uv.lock
+
+# LaTeX
 *.aux
 *.fls
 *.log

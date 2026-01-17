@@ -202,11 +202,11 @@ A single syndrome sample showing which detectors fired (red = triggered):
 ## Regenerating the Dataset
 
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
+# Install the package with uv
+uv sync
 
-# Generate circuits
-python scripts/generate_noisy_circuits.py \
+# Generate circuits using the CLI
+uv run generate-noisy-circuits \
   --distance 3 \
   --p 0.01 \
   --rounds 3 5 7 \
@@ -218,13 +218,13 @@ python scripts/generate_noisy_circuits.py \
 
 ```bash
 # Different error rates
-python scripts/generate_noisy_circuits.py --p 0.005 --rounds 3 5 7
+uv run generate-noisy-circuits --p 0.005 --rounds 3 5 7
 
 # Different distances
-python scripts/generate_noisy_circuits.py --distance 5 --rounds 5 7 9
+uv run generate-noisy-circuits --distance 5 --rounds 5 7 9
 
 # X-memory experiment
-python scripts/generate_noisy_circuits.py --task x --rounds 3 5 7
+uv run generate-noisy-circuits --task x --rounds 3 5 7
 ```
 
 ## References
