@@ -26,16 +26,6 @@ Circuit-level surface-code memory experiments generated with Stim for **Belief P
 | `sc_d3_r3_p0010_z.stim` | 3 rounds, p=0.01, Z-memory |
 | `sc_d3_r5_p0010_z.stim` | 5 rounds, p=0.01, Z-memory |
 | `sc_d3_r7_p0010_z.stim` | 7 rounds, p=0.01, Z-memory |
-| `sc_d3_layout.png` | Qubit layout visualization |
-| `parity_check_matrix.png` | BP parity check matrix H |
-| `syndrome_stats.png` | Detection event statistics |
-| `single_syndrome.png` | Example syndrome pattern |
-
-## Qubit Layout
-
-The surface code layout showing qubit positions (data + ancilla):
-
-![Qubit Layout](sc_d3_layout.png)
 
 ## Using This Dataset for BP Decoding
 
@@ -94,10 +84,6 @@ def build_parity_check_matrix(dem):
 H, priors, obs_flip = build_parity_check_matrix(dem)
 print(f"H shape: {H.shape}")  # (24, 286)
 ```
-
-The parity check matrix structure:
-
-![Parity Check Matrix](parity_check_matrix.png)
 
 ### Step 3: Sample Syndromes (Detection Events)
 
@@ -186,18 +172,6 @@ def evaluate_decoder(decoder_fn, circuit, n_shots=10000):
 
 # logical_error_rate = evaluate_decoder(bp_decode, circuit)
 ```
-
-## Syndrome Statistics
-
-Detection event frequencies across 1000 shots (left) and baseline observable flip rate without decoding (right):
-
-![Syndrome Statistics](syndrome_stats.png)
-
-## Example Syndrome
-
-A single syndrome sample showing which detectors fired (red = triggered):
-
-![Single Syndrome](single_syndrome.png)
 
 ## Regenerating the Dataset
 
