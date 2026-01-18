@@ -68,3 +68,6 @@ What each unit test covers:
 | `tests/test_bp_basic.py` | `test_apply_evidence` | `apply_evidence`, `belief_propagate`, `compute_marginals` |
 | `tests/test_integration.py` | `test_example_file_runs` | `read_model_file`, `BeliefPropagation`, `belief_propagate`, `compute_marginals` |
 | `tests/test_integration.py` | `test_example_with_evidence` | `read_evidence_file`, `apply_evidence` + BP pipeline |
+| `tests/testcase.py` | `test_unary_factor_marginal` | `belief_propagate`, `compute_marginals` (unary factor) |
+| `tests/testcase.py` | `test_chain_three_vars_exact` | `belief_propagate`, `compute_marginals` (tree exactness) |
+| `tests/testcase.py` | `test_message_normalization` | `collect_message`, `process_message` (normalization) |
