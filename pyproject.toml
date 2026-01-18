@@ -46,8 +46,8 @@ packages = ["src/bpdecoderplus"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
-[dependency-groups]
-dev = [
+[tool.uv]
+dev-dependencies = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
