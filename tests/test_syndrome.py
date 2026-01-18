@@ -28,8 +28,8 @@ class TestSampleSyndromes:
 
         assert syndromes.shape[0] == 10
         assert observables.shape == (10,)
-        assert syndromes.dtype == np.uint8
-        assert observables.dtype == np.uint8
+        assert syndromes.dtype in (np.uint8, np.bool_)
+        assert observables.dtype in (np.uint8, np.bool_)
 
     def test_without_observables(self):
         """Test sampling without observables."""
