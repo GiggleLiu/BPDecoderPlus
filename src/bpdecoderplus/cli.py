@@ -1,5 +1,5 @@
 """
-Command-line interface for generating noisy surface-code circuits.
+Command-line interface for generating noisy surface-code circuits and syndrome databases.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from bpdecoderplus.circuit import (
     run_smoke_test,
     write_circuit,
 )
+from bpdecoderplus.syndrome import generate_syndrome_database_from_circuit
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -63,6 +64,12 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip compiling and sampling for quick validation",
     )
+    parser.add_argument(
+        "--generate-syndromes",
+        type=int,
+        metavar="NUM_SHOTS",
+        help="Generate syndrome database with specified number of shots",
+    )
     return parser
 
 
@@ -109,6 +116,13 @@ def main(argv: list[str] | None = None) -> int:
         output_path = args.output / filename
         write_circuit(circuit, output_path)
         print(f"Wrote {output_path}")
+
+        # Generate syndrome database if requested
+        if args.generate_syndromes:
+            syndrome_path = generate_syndrome_database_from_circuit(
+                output_path, args.generate_syndromes
+            )
+            print(f"Wrote {syndrome_path}")
 
     print("Done.")
     return 0
