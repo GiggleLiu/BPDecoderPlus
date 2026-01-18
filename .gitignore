@@ -23,6 +23,7 @@ build/
 *.egg
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .uv/
 uv.lock
