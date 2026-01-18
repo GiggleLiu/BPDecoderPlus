@@ -15,6 +15,7 @@ from bpdecoderplus.circuit import (
     run_smoke_test,
     write_circuit,
 )
+from bpdecoderplus.dem import generate_dem_from_circuit
 from bpdecoderplus.syndrome import generate_syndrome_database_from_circuit
 
 
@@ -70,6 +71,11 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="NUM_SHOTS",
         help="Generate syndrome database with specified number of shots",
     )
+    parser.add_argument(
+        "--generate-dem",
+        action="store_true",
+        help="Generate detector error model (.dem file)",
+    )
     return parser
 
 
@@ -116,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
         output_path = args.output / filename
         write_circuit(circuit, output_path)
         print(f"Wrote {output_path}")
+
+        # Generate DEM if requested
+        if args.generate_dem:
+            dem_path = generate_dem_from_circuit(output_path)
+            print(f"Wrote {dem_path}")
 
         # Generate syndrome database if requested
         if args.generate_syndromes:

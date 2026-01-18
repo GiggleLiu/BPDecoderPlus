@@ -1,10 +1,11 @@
-.PHONY: help install setup test test-cov generate-dataset generate-syndromes clean
+.PHONY: help install setup test test-cov generate-dataset generate-dem generate-syndromes clean
 
 help:
 	@echo "Available targets:"
 	@echo "  install            - Install uv package manager"
 	@echo "  setup              - Set up development environment with uv"
 	@echo "  generate-dataset   - Generate noisy circuit dataset"
+	@echo "  generate-dem       - Generate detector error models"
 	@echo "  generate-syndromes - Generate syndrome database (1000 shots)"
 	@echo "  test               - Run tests"
 	@echo "  test-cov           - Run tests with coverage report"
@@ -21,6 +22,9 @@ setup: install
 
 generate-dataset:
 	uv run generate-noisy-circuits --distance 3 --p 0.01 --rounds 3 5 7 --task z --output datasets/noisy_circuits
+
+generate-dem:
+	uv run generate-noisy-circuits --distance 3 --p 0.01 --rounds 3 5 7 --task z --output datasets/noisy_circuits --generate-dem
 
 generate-syndromes:
 	uv run generate-noisy-circuits --distance 3 --p 0.01 --rounds 3 5 7 --task z --output datasets/noisy_circuits --generate-syndromes 1000
