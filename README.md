@@ -186,6 +186,42 @@ BPDecoderPlus/
     └── belief_propagation_qec_plan.tex
 ```
 
+## PyTorch BP Module (UAI)
+
+This repository also includes a PyTorch implementation of belief propagation for
+UAI factor graphs under `src/bpdecoderplus/pytorch_bp`.
+
+### Python Setup
+
+```bash
+pip install -e .
+```
+
+### Quick Example
+
+```python
+from bpdecoderplus.pytorch_bp import (
+    read_model_file,
+    BeliefPropagation,
+    belief_propagate,
+    compute_marginals,
+)
+
+model = read_model_file("examples/simple_model.uai")
+bp = BeliefPropagation(model)
+state, info = belief_propagate(bp)
+print(info)
+print(compute_marginals(state, bp))
+```
+
+### Examples and Tests
+
+```bash
+python examples/simple_example.py
+python examples/evidence_example.py
+pytest tests/test_bp_basic.py tests/test_uai_parser.py tests/test_integration.py tests/testcase.py
+```
+
 ## Available Decoders
 
 | Decoder | Symbol | Description |
