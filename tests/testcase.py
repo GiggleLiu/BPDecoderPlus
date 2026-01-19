@@ -16,6 +16,7 @@ from bpdecoderplus.pytorch_bp import (
     initial_state,
     collect_message,
     process_message,
+    apply_evidence,
 )
 
 
@@ -90,6 +91,45 @@ class TestBPAdditionalCases(unittest.TestCase):
         for var_msgs in state.message_out:
             for msg in var_msgs:
                 self.assertAlmostEqual(float(msg.sum()), 1.0, places=6)
+
+    def test_zero_message_handling(self):
+        content = "\n".join(
+            [
+                "MARKOV",
+                "1",
+                "2",
+                "2",
+                "1 0",
+                "1 0",
+                "2",
+                "0.0 0.0",
+                "2",
+                "0.7 0.3",
+            ]
+        )
+        model = read_model_from_string(content)
+        bp = BeliefPropagation(model)
+        state = initial_state(bp)
+        collect_message(bp, state, normalize=True)
+        process_message(bp, state, normalize=True, damping=0.0)
+        self.assertAlmostEqual(float(state.message_in[0][0].sum()), 0.0, places=6)
+        self.assertAlmostEqual(float(state.message_out[0][1].sum()), 0.0, places=6)
+
+    def test_evidence_out_of_range_zeros_factor(self):
+        content = "\n".join(
+            [
+                "MARKOV",
+                "1",
+                "2",
+                "1",
+                "1 0",
+                "2",
+                "0.4 0.6",
+            ]
+        )
+        model = read_model_from_string(content)
+        bp = apply_evidence(BeliefPropagation(model), {1: 5})
+        self.assertAlmostEqual(float(bp.factors[0].values.sum()), 0.0, places=6)
 
 
 if __name__ == "__main__":

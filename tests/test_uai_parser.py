@@ -58,6 +58,46 @@ class TestUAIParser(unittest.TestCase):
         evidence = read_evidence_file("examples/simple_model.evid")
         self.assertEqual(evidence, {1: 1})
 
+    def test_invalid_network_type(self):
+        content = "\n".join(
+            [
+                "INVALID",
+                "1",
+                "2",
+                "0",
+            ]
+        )
+        with self.assertRaises(ValueError):
+            read_model_from_string(content)
+
+    def test_scope_size_mismatch(self):
+        content = "\n".join(
+            [
+                "MARKOV",
+                "2",
+                "2 2",
+                "1",
+                "2 0",
+                "2",
+                "0.5 0.5",
+            ]
+        )
+        with self.assertRaises(ValueError):
+            read_model_from_string(content)
+
+    def test_missing_table_entries(self):
+        content = "\n".join(
+            [
+                "MARKOV",
+                "1",
+                "2",
+                "1",
+                "1 0",
+            ]
+        )
+        with self.assertRaises(ValueError):
+            read_model_from_string(content)
+
 
 if __name__ == "__main__":
     unittest.main()
