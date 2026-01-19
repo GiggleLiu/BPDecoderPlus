@@ -152,6 +152,64 @@ def build_parity_check_matrix(
     return H, priors, obs_flip
 
 
+def dem_to_uai(dem: stim.DetectorErrorModel) -> str:
+    """
+    Convert DEM to UAI format for probabilistic inference.
+
+    Args:
+        dem: Detector Error Model to convert.
+
+    Returns:
+        String in UAI format representing the factor graph.
+    """
+    errors = []
+    for inst in dem.flattened():
+        if inst.type == "error":
+            prob = inst.args_copy()[0]
+            targets = inst.targets_copy()
+            detectors = [t.val for t in targets if t.is_relative_detector_id()]
+            errors.append({"prob": prob, "detectors": detectors})
+
+    n_detectors = dem.num_detectors
+    lines = []
+    lines.append("MARKOV")
+    lines.append(str(n_detectors))
+    lines.append(" ".join(["2"] * n_detectors))
+    lines.append(str(len(errors)))
+
+    for e in errors:
+        dets = e["detectors"]
+        lines.append(f"{len(dets)} " + " ".join(map(str, dets)))
+
+    lines.append("")
+    for e in errors:
+        n_dets = len(e["detectors"])
+        n_entries = 2 ** n_dets
+        lines.append(str(n_entries))
+
+        p = e["prob"]
+        for i in range(n_entries):
+            parity = bin(i).count("1") % 2
+            if parity == 0:
+                lines.append(str(1 - p))
+            else:
+                lines.append(str(p))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def save_uai(dem: stim.DetectorErrorModel, output_path: pathlib.Path) -> None:
+    """
+    Save DEM as UAI format file.
+
+    Args:
+        dem: Detector Error Model to save.
+        output_path: Path to save the UAI file.
+    """
+    output_path.write_text(dem_to_uai(dem))
+
+
 def generate_dem_from_circuit(
     circuit_path: pathlib.Path,
     output_path: pathlib.Path | None = None,
@@ -177,5 +235,34 @@ def generate_dem_from_circuit(
 
     dem = extract_dem(circuit, decompose_errors=decompose_errors)
     save_dem(dem, output_path)
+
+    return output_path
+
+
+def generate_uai_from_circuit(
+    circuit_path: pathlib.Path,
+    output_path: pathlib.Path | None = None,
+    decompose_errors: bool = True,
+) -> pathlib.Path:
+    """
+    Generate and save UAI format file from a circuit file.
+
+    Args:
+        circuit_path: Path to the circuit file (.stim).
+        output_path: Optional output path. If None, uses datasets/dems/ directory.
+        decompose_errors: Whether to decompose errors into components.
+
+    Returns:
+        Path to the saved UAI file.
+    """
+    circuit = stim.Circuit.from_file(str(circuit_path))
+
+    if output_path is None:
+        dems_dir = pathlib.Path("datasets/dems")
+        dems_dir.mkdir(parents=True, exist_ok=True)
+        output_path = dems_dir / circuit_path.with_suffix(".uai").name
+
+    dem = extract_dem(circuit, decompose_errors=decompose_errors)
+    save_uai(dem, output_path)
 
     return output_path

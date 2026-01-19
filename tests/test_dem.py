@@ -13,11 +13,14 @@ from bpdecoderplus.circuit import generate_circuit
 from bpdecoderplus.dem import (
     build_parity_check_matrix,
     dem_to_dict,
+    dem_to_uai,
     extract_dem,
     generate_dem_from_circuit,
+    generate_uai_from_circuit,
     load_dem,
     save_dem,
     save_dem_json,
+    save_uai,
 )
 
 
@@ -218,3 +221,76 @@ class TestGenerateDemFromCircuit:
             dem_path = generate_dem_from_circuit(circuit_path, decompose_errors=False)
 
             assert dem_path.exists()
+
+
+class TestDemToUai:
+    """Tests for dem_to_uai function."""
+
+    def test_basic_conversion(self):
+        """Test basic DEM to UAI conversion."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+        uai_str = dem_to_uai(dem)
+
+        assert isinstance(uai_str, str)
+        assert "MARKOV" in uai_str
+        assert str(dem.num_detectors) in uai_str
+
+    def test_uai_format_structure(self):
+        """Test UAI format has correct structure."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+        uai_str = dem_to_uai(dem)
+
+        lines = uai_str.strip().split("\n")
+        assert lines[0] == "MARKOV"
+        assert int(lines[1]) == dem.num_detectors
+        assert len(lines[2].split()) == dem.num_detectors
+
+
+class TestSaveUai:
+    """Tests for save_uai function."""
+
+    def test_save_uai(self):
+        """Test saving UAI file."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            uai_path = pathlib.Path(tmpdir) / "test.uai"
+            save_uai(dem, uai_path)
+
+            assert uai_path.exists()
+            content = uai_path.read_text()
+            assert "MARKOV" in content
+
+
+class TestGenerateUaiFromCircuit:
+    """Tests for generate_uai_from_circuit function."""
+
+    def test_generate_from_file(self):
+        """Test generating UAI from circuit file."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            circuit_path = pathlib.Path(tmpdir) / "test.stim"
+            circuit_path.write_text(str(circuit))
+
+            uai_path = generate_uai_from_circuit(circuit_path)
+
+            assert uai_path.exists()
+            assert uai_path.suffix == ".uai"
+
+    def test_custom_output_path(self):
+        """Test generating UAI with custom output path."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            circuit_path = pathlib.Path(tmpdir) / "test.stim"
+            circuit_path.write_text(str(circuit))
+
+            custom_output = pathlib.Path(tmpdir) / "custom.uai"
+            uai_path = generate_uai_from_circuit(circuit_path, output_path=custom_output)
+
+            assert uai_path == custom_output
+            assert uai_path.exists()
