@@ -2,6 +2,18 @@
 
 Circuit-level surface-code memory experiments generated with Stim for **Belief Propagation (BP) decoding** demonstrations.
 
+## Dataset Organization
+
+The dataset is organized into subdirectories by file type:
+
+```
+datasets/
+├── circuits/     # Noisy quantum circuits (.stim)
+├── dems/         # Detector error models (.dem)
+├── uais/         # UAI format for probabilistic inference (.uai)
+└── syndromes/    # Syndrome databases (.npz)
+```
+
 ## Overview
 
 | Parameter | Value |
@@ -38,7 +50,7 @@ import stim
 import numpy as np
 
 # Load circuit
-circuit = stim.Circuit.from_file("datasets/noisy_circuits/sc_d3_r3_p0010_z.stim")
+circuit = stim.Circuit.from_file("datasets/circuits/sc_d3_r3_p0010_z.stim")
 
 # Extract DEM - this is what BP needs
 dem = circuit.detector_error_model(decompose_errors=True)
@@ -180,25 +192,27 @@ def evaluate_decoder(decoder_fn, circuit, n_shots=10000):
 uv sync
 
 # Generate circuits using the CLI
-uv run generate-noisy-circuits \
+python -m bpdecoderplus.cli \
   --distance 3 \
   --p 0.01 \
   --rounds 3 5 7 \
   --task z \
-  --output datasets/noisy_circuits
+  --generate-dem \
+  --generate-uai \
+  --generate-syndromes 10000
 ```
 
 ## Extending the Dataset
 
 ```bash
 # Different error rates
-uv run generate-noisy-circuits --p 0.005 --rounds 3 5 7
+python -m bpdecoderplus.cli --p 0.005 --rounds 3 5 7 --generate-dem --generate-uai
 
 # Different distances
-uv run generate-noisy-circuits --distance 5 --rounds 5 7 9
+python -m bpdecoderplus.cli --distance 5 --rounds 5 7 9 --generate-dem --generate-uai
 
 # X-memory experiment
-uv run generate-noisy-circuits --task x --rounds 3 5 7
+python -m bpdecoderplus.cli --task x --rounds 3 5 7 --generate-dem --generate-uai
 ```
 
 ## References

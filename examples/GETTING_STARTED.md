@@ -24,7 +24,7 @@ This creates files in organized subdirectories:
 datasets/
 ├── circuits/sc_d3_r3_p0010_z.stim    # Noisy quantum circuit
 ├── dems/sc_d3_r3_p0010_z.dem         # Detector error model
-├── dems/sc_d3_r3_p0010_z.uai         # UAI format for inference
+├── uais/sc_d3_r3_p0010_z.uai         # UAI format for inference
 └── syndromes/sc_d3_r3_p0010_z.npz    # 1000 syndrome samples
 ```
 
@@ -119,7 +119,7 @@ UAI (Uncertainty in Artificial Intelligence) is a standard format for representi
 python -m bpdecoderplus.cli --distance 3 --p 0.01 --rounds 3 --task z --generate-uai
 ```
 
-**Output:** `datasets/dems/sc_d3_r3_p0010_z.uai`
+**Output:** `datasets/uais/sc_d3_r3_p0010_z.uai`
 
 The `.uai` file structure:
 ```
@@ -234,10 +234,11 @@ datasets/
 │   └── sc_d3_r7_p0010_z.stim
 ├── dems/
 │   ├── sc_d3_r3_p0010_z.dem
-│   ├── sc_d3_r3_p0010_z.uai
 │   ├── sc_d3_r5_p0010_z.dem
+│   └── sc_d3_r7_p0010_z.dem
+├── uais/
+│   ├── sc_d3_r3_p0010_z.uai
 │   ├── sc_d3_r5_p0010_z.uai
-│   ├── sc_d3_r7_p0010_z.dem
 │   └── sc_d3_r7_p0010_z.uai
 └── syndromes/
     ├── sc_d3_r3_p0010_z.npz
