@@ -2,7 +2,7 @@ import unittest
 import itertools
 import torch
 
-from pytorch_bp import (
+from bpdecoderplus.pytorch_bp import (
     read_model_from_string,
     BeliefPropagation,
     belief_propagate,

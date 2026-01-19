@@ -1,7 +1,7 @@
 ## Belief Propagation (BP) Overview
 
 This document summarizes the BP message-passing rules implemented in
-`pytorch_bp/belief_propagation.py` for discrete factor graphs. The approach
+`src/bpdecoderplus/pytorch_bp/belief_propagation.py` for discrete factor graphs. The approach
 mirrors the tensor-contraction perspective used in TensorInference.jl.
 See https://github.com/TensorBFS/TensorInference.jl for the Julia reference.
 

@@ -1,6 +1,6 @@
 import unittest
 
-from pytorch_bp import (
+from bpdecoderplus.pytorch_bp import (
     read_model_file,
     read_evidence_file,
     BeliefPropagation,

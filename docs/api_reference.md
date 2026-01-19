@@ -1,6 +1,6 @@
 ## PyTorch BP API Reference
 
-This reference documents the public API exported from `pytorch_bp`.
+This reference documents the public API exported from `bpdecoderplus.pytorch_bp`.
 
 ### UAI Parsing
 

@@ -1,1 +1,1 @@
-"""Test package for pytorch_bp."""
+"""Tests for bpdecoderplus and pytorch_bp modules."""

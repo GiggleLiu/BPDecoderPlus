@@ -1,4 +1,9 @@
-from pytorch_bp import read_model_file, BeliefPropagation, belief_propagate, compute_marginals
+from bpdecoderplus.pytorch_bp import (
+    read_model_file,
+    BeliefPropagation,
+    belief_propagate,
+    compute_marginals,
+)
 
 
 def main():

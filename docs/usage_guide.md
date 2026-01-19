@@ -7,7 +7,12 @@ TensorInference.jl: https://github.com/TensorBFS/TensorInference.jl
 ### Quick Start
 
 ```python
-from pytorch_bp import read_model_file, BeliefPropagation, belief_propagate, compute_marginals
+from bpdecoderplus.pytorch_bp import (
+    read_model_file,
+    BeliefPropagation,
+    belief_propagate,
+    compute_marginals,
+)
 
 model = read_model_file("examples/simple_model.uai")
 bp = BeliefPropagation(model)
@@ -21,8 +26,8 @@ print(marginals[1])
 ### Evidence
 
 ```python
-from pytorch_bp import read_model_file, read_evidence_file, apply_evidence
-from pytorch_bp import BeliefPropagation, belief_propagate, compute_marginals
+from bpdecoderplus.pytorch_bp import read_model_file, read_evidence_file, apply_evidence
+from bpdecoderplus.pytorch_bp import BeliefPropagation, belief_propagate, compute_marginals
 
 model = read_model_file("examples/simple_model.uai")
 evidence = read_evidence_file("examples/simple_model.evid")

@@ -1,7 +1,7 @@
 import unittest
 import torch
 
-from pytorch_bp import read_model_from_string, read_evidence_file
+from bpdecoderplus.pytorch_bp import read_model_from_string, read_evidence_file
 
 
 class TestUAIParser(unittest.TestCase):
