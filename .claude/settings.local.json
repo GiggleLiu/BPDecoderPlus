@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh issue view:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh run view:*)"
+    ]
+  }
+}
