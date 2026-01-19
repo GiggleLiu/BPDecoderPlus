@@ -29,7 +29,7 @@ def create_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         type=pathlib.Path,
-        default=pathlib.Path("datasets/noisy_circuits"),
+        default=pathlib.Path("datasets/circuits"),
         help="Output directory for .stim circuits",
     )
     parser.add_argument(

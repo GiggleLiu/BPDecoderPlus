@@ -109,7 +109,7 @@ def generate_syndrome_database_from_circuit(
     Args:
         circuit_path: Path to the circuit file (.stim).
         num_shots: Number of syndrome samples to generate.
-        output_path: Optional output path. If None, uses circuit_path with .npz extension.
+        output_path: Optional output path. If None, uses datasets/syndromes/ directory.
 
     Returns:
         Path to the saved database file.
@@ -119,7 +119,9 @@ def generate_syndrome_database_from_circuit(
 
     # Generate output path if not provided
     if output_path is None:
-        output_path = circuit_path.with_suffix(".npz")
+        syndromes_dir = pathlib.Path("datasets/syndromes")
+        syndromes_dir.mkdir(parents=True, exist_ok=True)
+        output_path = syndromes_dir / circuit_path.with_suffix(".npz").name
 
     # Sample syndromes
     syndromes, observables = sample_syndromes(circuit, num_shots, include_observables=True)

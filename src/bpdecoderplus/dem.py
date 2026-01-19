@@ -162,7 +162,7 @@ def generate_dem_from_circuit(
 
     Args:
         circuit_path: Path to the circuit file (.stim).
-        output_path: Optional output path. If None, uses circuit_path with .dem extension.
+        output_path: Optional output path. If None, uses datasets/dems/ directory.
         decompose_errors: Whether to decompose errors into components.
 
     Returns:
@@ -171,7 +171,9 @@ def generate_dem_from_circuit(
     circuit = stim.Circuit.from_file(str(circuit_path))
 
     if output_path is None:
-        output_path = circuit_path.with_suffix(".dem")
+        dems_dir = pathlib.Path("datasets/dems")
+        dems_dir.mkdir(parents=True, exist_ok=True)
+        output_path = dems_dir / circuit_path.with_suffix(".dem").name
 
     dem = extract_dem(circuit, decompose_errors=decompose_errors)
     save_dem(dem, output_path)
