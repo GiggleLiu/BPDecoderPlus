@@ -1,6 +1,13 @@
 import unittest
 import torch
 
+try:
+    from ._path import add_project_root_to_path
+except ImportError:
+    from _path import add_project_root_to_path
+
+add_project_root_to_path()
+
 from bpdecoderplus.pytorch_bp import read_model_from_string, read_evidence_file
 
 

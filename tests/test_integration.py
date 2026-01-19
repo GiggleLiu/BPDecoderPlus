@@ -1,5 +1,12 @@
 import unittest
 
+try:
+    from ._path import add_project_root_to_path
+except ImportError:
+    from _path import add_project_root_to_path
+
+add_project_root_to_path()
+
 from bpdecoderplus.pytorch_bp import (
     read_model_file,
     read_evidence_file,
@@ -15,7 +22,7 @@ class TestIntegration(unittest.TestCase):
         model = read_model_file("examples/simple_model.uai")
         bp = BeliefPropagation(model)
         state, info = belief_propagate(bp, max_iter=30, tol=1e-8)
-        self.assertTrue(info.iterations > 0)
+        self.assertGreater(info.iterations, 0)
         marginals = compute_marginals(state, bp)
         self.assertEqual(set(marginals.keys()), {1, 2})
 
@@ -24,7 +31,7 @@ class TestIntegration(unittest.TestCase):
         evidence = read_evidence_file("examples/simple_model.evid")
         bp = apply_evidence(BeliefPropagation(model), evidence)
         state, info = belief_propagate(bp, max_iter=30, tol=1e-8)
-        self.assertTrue(info.iterations > 0)
+        self.assertGreater(info.iterations, 0)
         marginals = compute_marginals(state, bp)
         self.assertEqual(set(marginals.keys()), {1, 2})
 

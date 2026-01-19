@@ -2,7 +2,7 @@
 Belief Propagation (BP) algorithm implementation using PyTorch.
 """
 
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 import torch
 from copy import deepcopy
 
@@ -88,7 +88,7 @@ def initial_state(bp: BeliefPropagation) -> BPState:
         var_messages_in = []
         var_messages_out = []
         
-        for factor_idx in bp.v2t[var_idx]:
+        for _ in bp.v2t[var_idx]:
             card = bp.cards[var_idx]
             msg = torch.ones(card, dtype=torch.float64)
             var_messages_in.append(msg.clone())
@@ -97,7 +97,7 @@ def initial_state(bp: BeliefPropagation) -> BPState:
         message_in.append(var_messages_in)
         message_out.append(var_messages_out)
     
-    return BPState(deepcopy(message_in), message_out)
+    return BPState(message_in, message_out)
 
 
 def _compute_factor_to_var_message(
@@ -124,7 +124,7 @@ def _compute_factor_to_var_message(
         return factor_tensor.clone()
 
     # Multiply factor tensor by incoming messages (excluding target) and sum out dims.
-    result = factor_tensor
+    result = factor_tensor.clone()
     for dim in range(ndims):
         if dim == target_var_idx:
             continue
@@ -154,11 +154,13 @@ def collect_message(bp: BeliefPropagation, state: BPState, normalize: bool = Tru
     for factor_idx, factor in enumerate(bp.factors):
         # Get incoming messages from variables to this factor
         incoming_messages = []
+        var_factor_positions = []
         for var in factor.vars:
             var_idx_0based = var - 1
             # Find position of this factor in v2t[var_idx_0based]
             factor_pos = bp.v2t[var_idx_0based].index(factor_idx)
             incoming_messages.append(state.message_out[var_idx_0based][factor_pos])
+            var_factor_positions.append(factor_pos)
         
         # Compute outgoing message to each variable
         for var_pos, var in enumerate(factor.vars):
@@ -177,7 +179,7 @@ def collect_message(bp: BeliefPropagation, state: BPState, normalize: bool = Tru
                     outgoing_msg = outgoing_msg / msg_sum
             
             # Update message_in
-            factor_pos = bp.v2t[var_idx_0based].index(factor_idx)
+            factor_pos = var_factor_positions[var_pos]
             state.message_in[var_idx_0based][factor_pos] = outgoing_msg
 
 
@@ -334,19 +336,17 @@ def apply_evidence(bp: BeliefPropagation, evidence: Dict[int, int]) -> BeliefPro
         for var_pos, var in enumerate(factor.vars):
             if var in evidence:
                 evid_value = evidence[var]
-                # Create slice that zeros out non-evidence values
-                slices = [slice(None)] * len(factor.vars)
-                slices[var_pos] = evid_value
-                
-                # Zero out all non-evidence assignments
-                mask = torch.ones_like(factor_tensor)
-                for i in range(factor_tensor.shape[var_pos]):
-                    if i != evid_value:
-                        slices_mask = slices.copy()
-                        slices_mask[var_pos] = i
-                        mask[tuple(slices_mask)] = 0
-                
-                factor_tensor = factor_tensor * mask
+                dim_size = factor_tensor.shape[var_pos]
+                if 0 <= evid_value < dim_size:
+                    all_indices = torch.arange(dim_size, device=factor_tensor.device)
+                    zero_indices = all_indices[all_indices != evid_value]
+                    if zero_indices.numel() > 0:
+                        factor_tensor = factor_tensor.index_fill(
+                            var_pos, zero_indices, 0
+                        )
+                else:
+                    factor_tensor = torch.zeros_like(factor_tensor)
+                    break
         
         new_factors.append(Factor(factor.vars, factor_tensor))
     

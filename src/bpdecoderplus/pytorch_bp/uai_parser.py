@@ -2,7 +2,7 @@
 UAI file format parser for Belief Propagation.
 """
 
-from typing import List, Dict, Tuple
+from typing import List, Dict
 import torch
 
 
@@ -71,6 +71,10 @@ def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIMode
     
     # Parse header
     network_type = lines[0]  # MARKOV or BAYES
+    if network_type not in ("MARKOV", "BAYES"):
+        raise ValueError(
+            f"Unsupported UAI network type: {network_type!r}. Expected 'MARKOV' or 'BAYES'."
+        )
     nvars = int(lines[1])
     cards = [int(x) for x in lines[2].split()]
     ntables = int(lines[3])
@@ -80,6 +84,11 @@ def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIMode
     for i in range(ntables):
         parts = lines[4 + i].split()
         scope_size = int(parts[0])
+        if len(parts) - 1 != scope_size:
+            raise ValueError(
+                f"Scope size mismatch on line {4 + i}: "
+                f"declared {scope_size}, found {len(parts) - 1} variables."
+            )
         scope = [int(x) + 1 for x in parts[1:]]  # Convert to 1-based
         scopes.append(scope)
     
