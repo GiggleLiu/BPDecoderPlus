@@ -1,5 +1,7 @@
 # BPDecoderPlus: Quantum Error Correction with Belief Propagation
 
+Ｎote: This WIP project is for AI + Quantum winter school training.
+
 [![Tests](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/GiggleLiu/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/GiggleLiu/BPDecoderPlus)
 
