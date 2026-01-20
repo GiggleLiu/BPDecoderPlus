@@ -1,8 +1,8 @@
 site_name: BPDecoderPlus Documentation
 site_description: Quantum Error Correction with Belief Propagation
 site_author: BPDecoderPlus Contributors
-repo_url: https://github.com/GiggleLiu/BPDecoderPlus
-repo_name: GiggleLiu/BPDecoderPlus
+repo_url: https://github.com/TensorBFS/BPDecoderPlus
+repo_name: TensorBFS/BPDecoderPlus
 
 theme:
   name: material
