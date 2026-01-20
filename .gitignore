@@ -38,4 +38,4 @@ uv.lock
 *.blg
 *.fdb_latexmk
 *.synctex.gz
-note/belief_propagation_qec_plan.pdf
+note/belief_propagation_qec_plan.pdf.claude/settings.local.json

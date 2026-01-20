@@ -18,7 +18,7 @@ class TestCreateParser:
         parser = create_parser()
         args = parser.parse_args([])
 
-        assert args.output == pathlib.Path("datasets/circuits")
+        assert args.output == pathlib.Path("datasets/noisy_circuits")
         assert args.distance == 3
         assert args.rounds == [3, 5, 7]
         assert args.p == 0.01
