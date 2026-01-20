@@ -68,9 +68,9 @@ The DEM tells us which errors trigger which syndrome detectors.
 
 **Why we need it:**
 The circuit describes quantum operations, but the decoder needs to know:
-- What errors can occur?
-- Which detectors fire when each error happens?
-- Does the error flip the logical qubit?
+- What errors can occur? Decoder use it to decides what types of error it can output.
+- Which detectors fire when each error happens? This eventually transformed into a decoder graph/tanner graph/Factor graph.
+- Does the error flip the logical qubit? This used as a benchmark for logical error rate.
 
 **Generate DEM:**
 ```bash
