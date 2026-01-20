@@ -4,6 +4,7 @@
 
 [![Tests](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/GiggleLiu/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/GiggleLiu/BPDecoderPlus)
+[![Documentation](https://img.shields.io/badge/docs-online-blue.svg)](https://giggleliu.github.io/BPDecoderPlus/)
 
 A winter school project on circuit-level decoding of surface codes using belief propagation and integer programming decoders, with extensions for atom loss in neutral atom quantum computers.
 
