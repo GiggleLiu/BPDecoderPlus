@@ -1,4 +1,4 @@
-.PHONY: help install setup test test-cov generate-dataset generate-dem generate-syndromes clean
+.PHONY: help install setup test test-cov generate-dataset generate-dem generate-syndromes docs docs-serve clean
 
 help:
 	@echo "Available targets:"
@@ -9,6 +9,8 @@ help:
 	@echo "  generate-syndromes - Generate syndrome database (1000 shots)"
 	@echo "  test               - Run tests"
 	@echo "  test-cov           - Run tests with coverage report"
+	@echo "  docs               - Build documentation"
+	@echo "  docs-serve         - Serve documentation locally"
 	@echo "  clean              - Remove generated files and caches"
 
 install:
@@ -34,6 +36,14 @@ test:
 
 test-cov:
 	uv run pytest --cov=bpdecoderplus --cov-report=html --cov-report=term
+
+docs:
+	pip install mkdocs-material mkdocstrings[python] pymdown-extensions
+	mkdocs build
+
+docs-serve:
+	pip install mkdocs-material mkdocstrings[python] pymdown-extensions
+	mkdocs serve
 
 clean:
 	rm -rf .pytest_cache
