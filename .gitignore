@@ -39,3 +39,16 @@ uv.lock
 *.fdb_latexmk
 *.synctex.gz
 note/belief_propagation_qec_plan.pdf.claude/settings.local.json
+
+# Development tools
+.ruff_cache/
+.mypy_cache/
+
+# Binary files in docs (prevent future additions)
+# Note: note/ directory is allowed to contain PDFs/Typst files
+docs/*.pdf
+docs/*.typ
+
+# Dataset-specific
+*.npz.tmp
+*.stim.bak
