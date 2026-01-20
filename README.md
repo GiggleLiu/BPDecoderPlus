@@ -1,34 +1,25 @@
 # BPDecoderPlus: Quantum Error Correction with Belief Propagation
 
-Ｎote: This WIP project is for AI + Quantum winter school training.
-
 [![Tests](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/GiggleLiu/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/GiggleLiu/BPDecoderPlus)
 [![Documentation](https://img.shields.io/badge/docs-online-blue.svg)](https://giggleliu.github.io/BPDecoderPlus/)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A winter school project on circuit-level decoding of surface codes using belief propagation and integer programming decoders, with extensions for atom loss in neutral atom quantum computers.
+A Python package for circuit-level decoding of surface codes using belief propagation decoders.
 
-## Project Goals
+## Features
 
-| Level | Task | Description |
-|-------|------|-------------|
-| **Basic** | MLE Decoder | Reproduce the integer programming (MLE) decoder as the baseline |
-| **Challenge** | Atom Loss | Handle atom loss errors in neutral atom systems |
-| **Extension** | QEC Visualization | https://github.com/nzy1997/qec-thrust |
-
-Note: we also want to explore the boundary of vibe coding, which may lead to a scipost paper.
-
-## Learning Objectives
-
-After completing this project, students will:
-- Understand surface code structure and syndrome extraction
-- Implement and compare different decoding algorithms
-- Analyze decoder performance through threshold plots
-- Learn about practical QEC challenges (atom loss, circuit-level noise)
+- **Noisy Circuit Generation**: Generate rotated surface-code memory circuits with Stim
+- **Detector Error Models**: Export detector error models (DEMs) for decoder development
+- **Syndrome Sampling**: Pre-generate syndrome databases for training and testing
+- **PyTorch BP Module**: Belief propagation on factor graphs with PyTorch backend
+- **CLI Tools**: Command-line interface for dataset generation
+- **Production Ready**: Modern Python packaging, CI/CD, comprehensive tests
 
 ## Prerequisites
 
-- **Programming**: Julia basics, familiarity with Python for plotting
+- **Programming**: Python 3.10+, familiarity with NumPy and PyTorch
 - **Mathematics**: Linear algebra, probability theory
 - **QEC Background**: Stabilizer formalism, surface codes (helpful but not required)
 
@@ -118,89 +109,39 @@ Before starting, please read these foundational papers:
 - Comprehensive review of all surface code decoders
 - [Quantum 8:1498](https://quantum-journal.org/papers/q-2024-10-10-1498/)
 
-## Getting Started
+## Installation
 
-### 1. Clone the Repository
+### With uv (recommended)
 
 ```bash
-git clone <repository-url>
+# Install the package
+uv pip install bpdecoderplus
+
+# For development
+git clone https://github.com/GiggleLiu/BPDecoderPlus.git
 cd BPDecoderPlus
+uv sync --dev
 ```
 
-### 2. Install Dependencies
+### With pip
 
 ```bash
-# Install Julia dependencies
-make setup-julia
-
-# Install Python dependencies (for visualization)
-make setup-python
-
-# Or install both at once
-make setup
+# Install from source
+git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+cd BPDecoderPlus
+pip install -e .[dev,docs]
 ```
 
-### 3. Run Tests
+## Quick Start
+
+### Generate Noisy Circuits
 
 ```bash
-make test
+# Generate surface code circuits with noise
+generate-noisy-circuits --distance 3 5 7 --p 0.01 --rounds 3 5 7 --task z
 ```
 
-### 4. Quick Demo
-
-```bash
-# Run a quick benchmark to verify everything works
-make quick
-```
-
-Or interactively in Julia:
-```julia
-using BPDecoderPlus
-
-# Quick benchmark with IP decoder
-result = quick_benchmark(distance=5, p=0.05, n_trials=100)
-println("Logical error rate: ", result["logical_error_rate"])
-
-# Compare decoders
-compare_decoders([3, 5], [0.02, 0.05, 0.08], 100)
-```
-
-## Project Structure
-
-```
-BPDecoderPlus/
-├── README.md                    # This file
-├── Makefile                     # Build automation
-├── Project.toml                 # Julia dependencies
-├── src/
-│   └── BPDecoderPlus.jl         # Main module (uses TensorQEC.jl)
-├── benchmark/
-│   ├── generate_data.jl         # Generate benchmark data
-│   ├── run_benchmarks.jl        # Run decoder timing tests
-│   └── data/                    # Output data (JSON)
-├── python/
-│   ├── requirements.txt         # Python dependencies
-│   └── visualize.py             # Plotting scripts
-├── results/
-│   └── plots/                   # Generated plots
-├── test/
-│   └── runtests.jl              # Unit tests
-└── note/
-    └── belief_propagation_qec_plan.tex
-```
-
-## PyTorch BP Module (UAI)
-
-This repository also includes a PyTorch implementation of belief propagation for
-UAI factor graphs under `src/bpdecoderplus/pytorch_bp`.
-
-### Python Setup
-
-```bash
-pip install -e .
-```
-
-### Quick Example
+### Python API
 
 ```python
 from bpdecoderplus.pytorch_bp import (
@@ -210,186 +151,203 @@ from bpdecoderplus.pytorch_bp import (
     compute_marginals,
 )
 
+# Load UAI model
 model = read_model_file("examples/simple_model.uai")
+
+# Run belief propagation
 bp = BeliefPropagation(model)
 state, info = belief_propagate(bp)
-print(info)
-print(compute_marginals(state, bp))
+
+# Get marginals
+marginals = compute_marginals(state, bp)
+print(marginals)
 ```
 
-### Examples and Tests
+### Run Examples
 
 ```bash
 python examples/simple_example.py
 python examples/evidence_example.py
-pytest tests/test_bp_basic.py tests/test_uai_parser.py tests/test_integration.py tests/testcase.py
+python examples/minimal_example.py
 ```
 
-## Available Decoders
+## Project Structure
 
-| Decoder | Symbol | Description |
-|---------|--------|-------------|
-| IP (MLE) | `:IP` | Integer programming decoder - finds minimum weight error |
-| BP | `:BP` | Belief propagation without post-processing |
-| BP+OSD | `:BPOSD` | BP with Ordered Statistics Decoding post-processing |
-| Matching | `:Matching` | Minimum weight perfect matching (via TensorQEC) |
-
-## Tasks
-
-### Basic Task: Reproduce MLE Decoder
-
-1. Understand how surface codes work using TensorQEC
-2. Run the IP decoder on different code distances
-3. Generate threshold plots (logical vs physical error rate)
-4. Analyze how performance scales with code distance
-
-```julia
-using BPDecoderPlus
-
-# Create surface code
-code = SurfaceCode(5, 5)
-tanner = CSSTannerGraph(code)
-
-# Create error model
-em = iid_error(0.03, 0.03, 0.03, 25)
-
-# Decode with IP
-decoder = IPDecoder()
-compiled = compile(decoder, tanner)
-
-ep = random_error_pattern(em)
-syn = syndrome_extraction(ep, tanner)
-result = decode(compiled, syn)
-
-# Check for logical error
-x_err, z_err, y_err = check_logical_error(tanner, ep, result.error_pattern)
+```
+BPDecoderPlus/
+├── README.md                    # This file
+├── LICENSE                      # MIT License
+├── pyproject.toml              # Package configuration
+├── Makefile                     # Build automation
+├── src/bpdecoderplus/          # Main package
+│   ├── __init__.py
+│   ├── circuit.py              # Circuit generation with Stim
+│   ├── dem.py                  # Detector error model export
+│   ├── syndrome.py             # Syndrome sampling
+│   ├── cli.py                  # Command-line interface
+│   └── pytorch_bp/             # PyTorch BP module
+│       ├── belief_propagation.py
+│       └── uai_parser.py
+├── datasets/                    # Sample datasets
+│   ├── README.md
+│   └── *.stim, *.dem, *.uai   # Generated data
+├── docs/                        # MkDocs documentation
+│   ├── index.md
+│   ├── getting_started.md
+│   ├── usage_guide.md
+│   └── api_reference.md
+├── examples/                    # Example scripts
+│   ├── simple_example.py
+│   ├── evidence_example.py
+│   └── minimal_example.py
+├── tests/                       # Test suite
+│   ├── test_circuit.py
+│   ├── test_dem.py
+│   ├── test_syndrome.py
+│   ├── test_bp_basic.py
+│   └── test_integration.py
+└── .github/workflows/          # CI/CD
+    ├── test.yml
+    └── docs.yml
 ```
 
-### Challenge Task: Implement and Compare BP Decoder
+## Command-Line Interface
 
-1. Run the BP decoder and compare with IP
-2. Understand when BP fails and when OSD helps
-3. Compare threshold performance
-4. Analyze timing differences
+The `generate-noisy-circuits` command generates surface code datasets:
 
-```julia
-# Compare decoders
-results = compare_decoders(
-    [3, 5, 7],           # distances
-    0.01:0.02:0.15,       # error rates
-    1000;                 # trials
-    decoders=[:IP, :BP, :BPOSD]
-)
-```
-
-### Extension: Handle Atom Loss
-
-1. Understand the atom loss model
-2. Compare naive vs loss-aware decoding
-3. Analyze threshold degradation with loss
-
-```julia
-# Simulate atom loss
-loss_model = AtomLossModel(0.02)  # 2% loss rate
-tanner, lost_qubits = apply_atom_loss(tanner, loss_model)
-
-# Decode with loss information
-result = decode_with_atom_loss(tanner, syn, decoder, lost_qubits)
-```
-
-## Running Benchmarks
-
-### Full Benchmark (takes longer, more accurate)
 ```bash
-make benchmark
-make visualize
+# Basic usage
+generate-noisy-circuits --distance 3 --p 0.01 --rounds 3 5 --task z
+
+# Multiple distances and error rates
+generate-noisy-circuits --distance 3 5 7 --p 0.005 0.01 0.015 --rounds 3 5 7 --task z
+
+# Specify output directory
+generate-noisy-circuits --distance 5 --p 0.01 --rounds 5 --task z --output datasets/
 ```
 
-### Quick Benchmark (for testing)
+## Running Tests
+
 ```bash
-make quick
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=bpdecoderplus --cov-report=html
+
+# Run specific test file
+uv run pytest tests/test_circuit.py
 ```
 
-### Individual Decoder Test
+## Building Documentation
+
 ```bash
-make benchmark-ip
-make benchmark-bp
-make benchmark-bposd
+# Serve documentation locally
+make docs-serve
+
+# Build documentation
+make docs
 ```
 
 ## Makefile Targets
 
 | Target | Description |
 |--------|-------------|
-| `make setup` | Install all dependencies |
+| `make setup` | Install dependencies with uv |
 | `make test` | Run unit tests |
-| `make benchmark` | Generate full benchmark data |
-| `make quick` | Quick benchmark (fewer trials) |
-| `make visualize` | Generate plots from data |
-| `make all` | Full pipeline: test -> benchmark -> visualize |
+| `make docs` | Build documentation |
+| `make docs-serve` | Serve documentation locally |
 | `make clean` | Remove generated files |
 | `make help` | Show available targets |
 
-## Output Plots
+## Development
 
-After running benchmarks and visualization, you'll find:
+### Setting Up Development Environment
 
-- `results/plots/threshold_ip.png` - IP decoder threshold curve
-- `results/plots/threshold_bp.png` - BP decoder threshold curve
-- `results/plots/threshold_bposd.png` - BP+OSD decoder threshold curve
-- `results/plots/decoder_comparison.png` - Side-by-side comparison
-- `results/plots/timing_comparison.png` - Decoding speed comparison
-- `results/plots/atom_loss.png` - Effect of atom loss
-- `results/plots/scalability.png` - Scalability analysis
+```bash
+# Clone repository
+git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+cd BPDecoderPlus
 
-## Evaluation Criteria
+# Install with development dependencies
+uv sync --dev
 
-Your submission will be evaluated on:
+# Install pre-commit hooks (if configured)
+uv run pre-commit install
+```
 
-1. **Correctness** (40%): Do your decoders produce valid corrections?
-2. **Analysis** (30%): Quality of threshold plots and performance analysis
-3. **Code Quality** (20%): Clean, documented, well-tested code
-4. **Extension** (10%): Atom loss handling or other improvements
+### Code Style
+
+This project uses:
+- **Ruff** for linting and formatting
+- **pytest** for testing
+- **Type hints** for public APIs
 
 ## Resources
 
-### Core Library
-- [TensorQEC.jl](https://github.com/nzy1997/TensorQEC.jl) - QEC library we build on
-
 ### Reference Implementations
+- [Stim](https://github.com/quantumlib/Stim) - Fast stabilizer circuit simulator (used by this package)
 - [bp_osd](https://github.com/quantumgizmos/bp_osd) - Python BP+OSD implementation
 - [ldpc](https://github.com/quantumgizmos/ldpc) - LDPC decoder library
+- [TensorQEC.jl](https://github.com/nzy1997/TensorQEC.jl) - Julia quantum error correction library
 
 ### Documentation
-- [TensorQEC Documentation](https://nzy1997.github.io/TensorQEC.jl/dev/)
+- [Stim Documentation](https://github.com/quantumlib/Stim/blob/main/doc/index.md)
 - [Error Correction Zoo](https://errorcorrectionzoo.org/)
+- [BPDecoderPlus Documentation](https://giggleliu.github.io/BPDecoderPlus/)
 
 ## Troubleshooting
 
-### TensorQEC fails to precompile
-This is a known issue with YaoSym. It still works at runtime:
-```julia
-# Ignore precompilation warnings and proceed
-using TensorQEC
-```
-
 ### Out of memory on large codes
-Reduce code distance or number of trials:
-```julia
+
+Reduce code distance or number of samples:
+
+```bash
 # Use smaller codes for testing
-results = quick_benchmark(distance=3, n_trials=100)
+generate-noisy-circuits --distance 3 --rounds 3 5 --p 0.01 --task z
 ```
 
-### Visualization fails
-Ensure Python dependencies are installed:
+### Import errors
+
+Ensure the package is installed correctly:
+
 ```bash
-pip install -r python/requirements.txt
+# Reinstall in development mode
+uv pip install -e .
+
+# Or with pip
+pip install -e .
+```
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Citation
+
+If you use BPDecoderPlus in your research, please cite:
+
+```bibtex
+@software{bpdecoderplus2025,
+  title = {BPDecoderPlus: Belief Propagation Decoders for Surface Codes},
+  author = {Liu, Jinguo and Contributors},
+  year = {2025},
+  url = {https://github.com/GiggleLiu/BPDecoderPlus}
+}
 ```
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT License - See [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-This project is built on [TensorQEC.jl](https://github.com/nzy1997/TensorQEC.jl) by nzy1997.
+This project uses:
+- [Stim](https://github.com/quantumlib/Stim) for efficient quantum circuit simulation
+- [PyTorch](https://pytorch.org/) for the belief propagation implementation
+- [uv](https://github.com/astral-sh/uv) for fast Python package management
+
+## Related Projects
+
+- [TensorQEC.jl](https://github.com/nzy1997/TensorQEC.jl) - Julia quantum error correction library
+- [QEC Visualization](https://github.com/nzy1997/qec-thrust) - Quantum error correction visualization tools

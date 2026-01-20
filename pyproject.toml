@@ -6,7 +6,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
+    { name = "Jinguo Liu", email = "cacate0129@gmail.com" },
     { name = "BPDecoderPlus Contributors" }
+]
+maintainers = [
+    { name = "Jinguo Liu", email = "cacate0129@gmail.com" }
 ]
 keywords = ["quantum", "error-correction", "surface-code", "belief-propagation", "stim"]
 classifiers = [
@@ -19,17 +23,26 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-
 dependencies = [
     "stim>=1.12.0",
     "numpy>=1.24.0",
     "torch>=2.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/GiggleLiu/BPDecoderPlus"
+Documentation = "https://giggleliu.github.io/BPDecoderPlus/"
+Repository = "https://github.com/GiggleLiu/BPDecoderPlus"
+Issues = "https://github.com/GiggleLiu/BPDecoderPlus/issues"
+Changelog = "https://github.com/GiggleLiu/BPDecoderPlus/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "ruff>=0.8.0",
+    "pre-commit>=3.0.0",
+    "mypy>=1.0.0",
 ]
 docs = [
     "mkdocs-material>=9.0.0",
@@ -52,8 +65,28 @@ packages = ["src/bpdecoderplus"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "ruff>=0.8.0",
+    "pre-commit>=3.0.0",
+    "mypy>=1.0.0",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501"]  # Line too long (handled by formatter)
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.isort]
+known-first-party = ["bpdecoderplus"]
