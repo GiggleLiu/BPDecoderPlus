@@ -1,7 +1,7 @@
 # BPDecoderPlus
 
-[![Tests](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/GiggleLiu/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/GiggleLiu/BPDecoderPlus)
+[![Tests](https://github.com/TensorBFS/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/TensorBFS/BPDecoderPlus/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/TensorBFS/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/TensorBFS/BPDecoderPlus)
 
 **Quantum Error Correction with Belief Propagation**
 
@@ -42,7 +42,7 @@ Install the package:
 
 ```bash
 # Clone the repository
-git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+git clone https://github.com/TensorBFS/BPDecoderPlus.git
 cd BPDecoderPlus
 
 # Install dependencies

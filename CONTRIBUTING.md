@@ -13,7 +13,7 @@ Thank you for your interest in contributing to BPDecoderPlus! This document prov
 
 ```bash
 # Clone the repository
-git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+git clone https://github.com/TensorBFS/BPDecoderPlus.git
 cd BPDecoderPlus
 
 # Install dependencies with uv (recommended)
@@ -257,9 +257,9 @@ Please include:
 
 ## Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/GiggleLiu/BPDecoderPlus/issues)
+- **Issues**: [GitHub Issues](https://github.com/TensorBFS/BPDecoderPlus/issues)
 - **Discussions**: Use GitHub Discussions for questions
-- **Documentation**: [Online Docs](https://giggleliu.github.io/BPDecoderPlus/)
+- **Documentation**: [Online Docs](https://tensorbfs.github.io/BPDecoderPlus/)
 
 ## Code of Conduct
 

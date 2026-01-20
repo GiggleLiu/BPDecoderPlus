@@ -1,8 +1,8 @@
 # BPDecoderPlus: Quantum Error Correction with Belief Propagation
 
-[![Tests](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/GiggleLiu/BPDecoderPlus/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/GiggleLiu/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/GiggleLiu/BPDecoderPlus)
-[![Documentation](https://img.shields.io/badge/docs-online-blue.svg)](https://giggleliu.github.io/BPDecoderPlus/)
+[![Tests](https://github.com/TensorBFS/BPDecoderPlus/actions/workflows/test.yml/badge.svg)](https://github.com/TensorBFS/BPDecoderPlus/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/TensorBFS/BPDecoderPlus/branch/main/graph/badge.svg)](https://codecov.io/gh/TensorBFS/BPDecoderPlus)
+[![Documentation](https://img.shields.io/badge/docs-online-blue.svg)](https://tensorbfs.github.io/BPDecoderPlus/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -118,7 +118,7 @@ Before starting, please read these foundational papers:
 uv pip install bpdecoderplus
 
 # For development
-git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+git clone https://github.com/TensorBFS/BPDecoderPlus.git
 cd BPDecoderPlus
 uv sync --dev
 ```
@@ -127,7 +127,7 @@ uv sync --dev
 
 ```bash
 # Install from source
-git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+git clone https://github.com/TensorBFS/BPDecoderPlus.git
 cd BPDecoderPlus
 pip install -e .[dev,docs]
 ```
@@ -266,7 +266,7 @@ make docs
 
 ```bash
 # Clone repository
-git clone https://github.com/GiggleLiu/BPDecoderPlus.git
+git clone https://github.com/TensorBFS/BPDecoderPlus.git
 cd BPDecoderPlus
 
 # Install with development dependencies
@@ -294,7 +294,7 @@ This project uses:
 ### Documentation
 - [Stim Documentation](https://github.com/quantumlib/Stim/blob/main/doc/index.md)
 - [Error Correction Zoo](https://errorcorrectionzoo.org/)
-- [BPDecoderPlus Documentation](https://giggleliu.github.io/BPDecoderPlus/)
+- [BPDecoderPlus Documentation](https://tensorbfs.github.io/BPDecoderPlus/)
 
 ## Troubleshooting
 
@@ -332,7 +332,7 @@ If you use BPDecoderPlus in your research, please cite:
   title = {BPDecoderPlus: Belief Propagation Decoders for Surface Codes},
   author = {Liu, Jinguo and Contributors},
   year = {2025},
-  url = {https://github.com/GiggleLiu/BPDecoderPlus}
+  url = {https://github.com/TensorBFS/BPDecoderPlus}
 }
 ```
 
