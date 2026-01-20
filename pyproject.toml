@@ -30,11 +30,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/GiggleLiu/BPDecoderPlus"
-Documentation = "https://giggleliu.github.io/BPDecoderPlus/"
-Repository = "https://github.com/GiggleLiu/BPDecoderPlus"
-Issues = "https://github.com/GiggleLiu/BPDecoderPlus/issues"
-Changelog = "https://github.com/GiggleLiu/BPDecoderPlus/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/TensorBFS/BPDecoderPlus"
+Documentation = "https://tensorbfs.github.io/BPDecoderPlus/"
+Repository = "https://github.com/TensorBFS/BPDecoderPlus"
+Issues = "https://github.com/TensorBFS/BPDecoderPlus/issues"
+Changelog = "https://github.com/TensorBFS/BPDecoderPlus/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
