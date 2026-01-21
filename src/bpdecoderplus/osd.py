@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Union
 
 class OSDDecoder:
     def __init__(self, H: np.ndarray):
@@ -10,23 +10,56 @@ class OSDDecoder:
         self.H = H.astype(np.int8)
         self.num_checks, self.num_errors = H.shape
 
-    def solve(self, syndrome: np.ndarray, marginals: Dict[int, float], error_var_start: int, osd_order: int = 10, random_seed: int = None) -> np.ndarray:
+    def _compute_soft_weight(self, solution: np.ndarray, llrs: np.ndarray) -> float:
         """
+        Compute soft-weighted cost based on BP log-likelihood ratios (LLRs).
+        
+        According to BP+OSD paper (arXiv:2005.07016), the cost should be:
+        cost = sum_i [ e_i * |LLR_i| ] for errors that disagree with BP hard decision
+        
+        LLR > 0 means BP thinks no error (p < 0.5)
+        LLR < 0 means BP thinks error (p > 0.5)
+        
         Args:
-            syndrome: the observed syndrome
-            marginals: the marginal probabilities calculated by BP
-            error_var_start: the starting index of the error variables
+            solution: binary error pattern (0 or 1 for each variable)
+            llrs: log-likelihood ratios from BP (LLR = log((1-p)/p))
+        
+        Returns:
+            Soft-weighted cost (lower is better)
+        """
+        # Cost is sum of |LLR| for positions where solution disagrees with BP hard decision
+        # BP hard decision: error if LLR < 0, no error if LLR > 0
+        bp_hard_decision = (llrs < 0).astype(int)
+        disagreement = (solution != bp_hard_decision).astype(float)
+        cost = np.sum(disagreement * np.abs(llrs))
+        return cost
+
+    def solve(self, syndrome: np.ndarray, error_probs: np.ndarray, osd_order: int = 10, random_seed: Optional[int] = None) -> np.ndarray:
+        """
+        Solve for the most likely error pattern using OSD post-processing.
+        
+        Args:
+            syndrome: the observed syndrome (binary array of length m)
+            error_probs: error probabilities from BP for each variable (array of length n)
+                        Values should be in range [0, 1], representing P(error=1)
             osd_order: the search depth (lambda).
                        0 = OSD-0 (no search, fast but low accuracy)
                        >0 = OSD-E (search in the most suspicious osd_order free variables)
             random_seed: optional random seed for deterministic behavior
+            
+        Returns:
+            Estimated error pattern (binary array of length n)
         """
-        # 1. Extract the probabilities and add a small perturbation (Break ties)
-        probs = np.zeros(self.num_errors)
-        for i in range(self.num_errors):
-            var_idx = error_var_start + i
-            if var_idx in marginals:
-                probs[i] = marginals[var_idx][1].item()
+        # 1. Convert probabilities to numpy array and clip to valid range
+        probs = np.asarray(error_probs, dtype=np.float64).flatten()
+        if len(probs) != self.num_errors:
+            raise ValueError(f"error_probs length {len(probs)} doesn't match number of errors {self.num_errors}")
+        
+        # Clip probabilities to avoid numerical issues
+        probs = np.clip(probs, 1e-10, 1 - 1e-10)
+        
+        # Compute LLRs for soft-weighted cost function: LLR = log((1-p)/p)
+        llrs = np.log((1 - probs) / probs)
 
         # Add a small perturbation to prevent sorting uncertainty
         if random_seed is not None:
@@ -34,8 +67,9 @@ class OSDDecoder:
         probs += np.random.uniform(0, 1e-6, size=self.num_errors)
 
         # 2. Sort (Soft Decision)
-        # Sort the errors by probability from largest to smallest
-        sorted_indices = np.argsort(probs)[::-1]
+        # Sort by reliability: |p - 0.5| descending (most reliable first)
+        reliability = np.abs(probs - 0.5)
+        sorted_indices = np.argsort(reliability)[::-1]
         
         # 3. Build the augmented matrix [H_sorted | s]
         H_sorted = self.H[:, sorted_indices]
@@ -83,17 +117,19 @@ class OSDDecoder:
             final_solution_sorted = solution_base
         else:
             # --- OSD-E (Exhaustive Search) Core logic ---
-            # We only search in the "most suspicious" (highest probability) osd_order free variables.
+            # Search over the least reliable (most uncertain) free variables
 
-            # Select free variables with highest probability
-            # Map free columns in sorted space back to their original probabilities
-            free_cols_with_probs = [(col, probs[sorted_indices[col]]) for col in free_cols]
-            # Sort by probability (descending)
-            free_cols_with_probs.sort(key=lambda x: x[1], reverse=True)
-            # Select top osd_order free variables
-            search_cols = [col for col, _ in free_cols_with_probs[:osd_order]]
-            min_weight = self.num_errors + 1 # Initialize to a large number
+            # Select free variables with lowest reliability (closest to 0.5)
+            free_cols_with_reliability = [(col, reliability[sorted_indices[col]]) for col in free_cols]
+            # Sort by reliability (ascending - least reliable first)
+            free_cols_with_reliability.sort(key=lambda x: x[1])
+            # Select least reliable osd_order free variables
+            search_cols = [col for col, _ in free_cols_with_reliability[:osd_order]]
+            min_cost = float('inf')  # Initialize to infinity for soft-weighted cost
             best_solution_sorted = None
+            
+            # Precompute sorted LLRs for cost function
+            llrs_sorted = llrs[sorted_indices]
             
             # Iterate through 2^k possibilities (k = len(search_cols))
             # For d=3, order=10 ~ 15 is very fast
@@ -118,10 +154,11 @@ class OSDDecoder:
                         pivot_c = pivots_in_row[0]
                         cand_sol[pivot_c] = target_syndrome[r]
 
-                # Calculate Hamming weight and track best solution
-                w = np.sum(cand_sol)
-                if w < min_weight:
-                    min_weight = w
+                # Calculate soft-weighted cost and track best solution
+                # Use sorted LLRs since cand_sol is in sorted order
+                cost = self._compute_soft_weight(cand_sol, llrs_sorted)
+                if cost < min_cost:
+                    min_cost = cost
                     best_solution_sorted = cand_sol.copy()
             
             final_solution_sorted = best_solution_sorted
