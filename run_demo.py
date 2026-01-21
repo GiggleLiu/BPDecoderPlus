@@ -45,7 +45,12 @@ for idx, syndrome in enumerate(syndromes[:1000]):
     num_detectors = len(syndromes[0])
     error_var_start = num_detectors + 1
 
-    estimated_errors = osd.solve(syndrome, marginals, error_var_start, osd_order=10)
+    estimated_errors = np.zeros(len(obs_flip), dtype=int)
+    for i, var_idx in enumerate(range(error_var_start, error_var_start + len(obs_flip))):
+        if var_idx in marginals:
+            p0, p1 = marginals[var_idx][0].item(), marginals[var_idx][1].item()
+            estimated_errors[i] = 1 if p1 > p0 else 0
+    # estimated_errors = osd.solve(syndrome, marginals, error_var_start,osd_order=10)
     predictions.append(np.dot(estimated_errors, obs_flip) % 2)
 
 logical_error_rate = np.mean(np.array(predictions) != observables[:1000])
