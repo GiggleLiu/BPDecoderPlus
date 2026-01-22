@@ -12,6 +12,7 @@ from bpdecoderplus.circuit import (
     run_smoke_test,
     write_circuit,
 )
+from bpdecoderplus.batch_osd import BatchOSDDecoder
 
 __version__ = "0.1.0"
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "prob_tag",
     "run_smoke_test",
     "write_circuit",
+    "BatchOSDDecoder",
 ]
