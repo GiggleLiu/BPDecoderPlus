@@ -44,6 +44,12 @@ class BeliefPropagation:
         """Return number of variables."""
         return self.nvars
 
+    def to(self, device):
+        """Move all factor tensors to specified device."""
+        for factor in self.factors:
+            factor.values = factor.values.to(device)
+        return self
+
 
 class BPState:
     """BP state storing messages."""
@@ -71,32 +77,36 @@ class BPInfo:
         return f"BPInfo({status}, iterations={self.iterations})"
 
 
-def initial_state(bp: BeliefPropagation) -> BPState:
+def initial_state(bp: BeliefPropagation, device=None) -> BPState:
     """
     Initialize BP message state with all ones vectors.
-    
+
     Args:
         bp: BeliefPropagation object
-    
+        device: torch device to use (default: cpu)
+
     Returns:
         BPState with initialized messages
     """
+    if device is None:
+        device = torch.device('cpu')
+
     message_in = []
     message_out = []
-    
+
     for var_idx in range(bp.nvars):
         var_messages_in = []
         var_messages_out = []
-        
+
         for _ in bp.v2t[var_idx]:
             card = bp.cards[var_idx]
-            msg = torch.ones(card, dtype=torch.float64)
+            msg = torch.ones(card, dtype=torch.float64, device=device)
             var_messages_in.append(msg.clone())
             var_messages_out.append(msg.clone())
-        
+
         message_in.append(var_messages_in)
         message_out.append(var_messages_out)
-    
+
     return BPState(message_in, message_out)
 
 
@@ -203,7 +213,8 @@ def process_message(
     for var_idx_0based in range(bp.nvars):
         for factor_pos, factor_idx in enumerate(bp.v2t[var_idx_0based]):
             # Compute product of all incoming messages except from current factor
-            product = torch.ones(bp.cards[var_idx_0based], dtype=torch.float64)
+            device = state.message_in[var_idx_0based][0].device if state.message_in[var_idx_0based] else torch.device('cpu')
+            product = torch.ones(bp.cards[var_idx_0based], dtype=torch.float64, device=device)
             
             for other_factor_pos, other_factor_idx in enumerate(bp.v2t[var_idx_0based]):
                 if other_factor_pos != factor_pos:
@@ -245,25 +256,29 @@ def _check_convergence(message_new: List[List[torch.Tensor]],
     return True
 
 
-def belief_propagate(bp: BeliefPropagation, 
-                    max_iter: int = 100, 
-                    tol: float = 1e-6, 
+def belief_propagate(bp: BeliefPropagation,
+                    max_iter: int = 100,
+                    tol: float = 1e-6,
                     damping: float = 0.2,
-                    normalize: bool = True) -> Tuple[BPState, BPInfo]:
+                    normalize: bool = True,
+                    device=None) -> Tuple[BPState, BPInfo]:
     """
     Run Belief Propagation algorithm main loop.
-    
+
     Args:
         bp: BeliefPropagation object
         max_iter: Maximum number of iterations
         tol: Convergence tolerance
         damping: Damping factor
         normalize: Whether to normalize messages
-    
+        device: torch device to use (default: infer from bp factors)
+
     Returns:
         Tuple of (BPState, BPInfo)
     """
-    state = initial_state(bp)
+    if device is None and bp.factors:
+        device = bp.factors[0].values.device
+    state = initial_state(bp, device=device)
     
     for iteration in range(max_iter):
         # Save previous messages for convergence check
@@ -278,6 +293,28 @@ def belief_propagate(bp: BeliefPropagation,
             return state, BPInfo(converged=True, iterations=iteration + 1)
     
     return state, BPInfo(converged=False, iterations=max_iter)
+
+
+def _check_syndrome_satisfied(bp: BeliefPropagation, decoding: Dict[int, int],
+                               syndrome: Dict[int, int]) -> bool:
+    """
+    Check if current decoding satisfies the syndrome.
+
+    Args:
+        bp: BeliefPropagation object
+        decoding: Dictionary mapping variable index (1-based) to value (0 or 1)
+        syndrome: Dictionary mapping factor index to syndrome value (0 or 1)
+
+    Returns:
+        True if syndrome is satisfied, False otherwise
+    """
+    for factor_idx, factor in enumerate(bp.factors):
+        parity = 0
+        for var in factor.vars:
+            parity ^= decoding.get(var, 0)
+        if parity != syndrome.get(factor_idx, 0):
+            return False
+    return True
 
 
 def compute_marginals(state: BPState, bp: BeliefPropagation) -> Dict[int, torch.Tensor]:
@@ -297,7 +334,8 @@ def compute_marginals(state: BPState, bp: BeliefPropagation) -> Dict[int, torch.
     
     for var_idx_0based in range(bp.nvars):
         # Product of all incoming messages
-        product = torch.ones(bp.cards[var_idx_0based], dtype=torch.float64)
+        device = state.message_in[var_idx_0based][0].device if state.message_in[var_idx_0based] else torch.device('cpu')
+        product = torch.ones(bp.cards[var_idx_0based], dtype=torch.float64, device=device)
         
         for msg in state.message_in[var_idx_0based]:
             product = product * msg
