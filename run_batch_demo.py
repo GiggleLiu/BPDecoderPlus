@@ -25,14 +25,14 @@ from bpdecoderplus.osd import OSDDecoder
 
 # Configuration
 OSD_ORDER = 15  # Search 2^15 = 32768 candidates (good balance of speed/accuracy)
-BP_MAX_ITER = 20  # BP iterations
+BP_MAX_ITER = 50  # BP iterations (increased for better convergence at low error rates)
 BATCH_SIZE = 50
-NUM_SAMPLES = 1000
+NUM_SAMPLES = 1000  # 1000 samples for reasonable runtime and statistical significance
 
 # Load data
 print("Loading data...")
-dem = load_dem('datasets/sc_d3_r3_p0010_z.dem')
-syndromes, observables, _ = load_syndrome_database('datasets/sc_d3_r3_p0010_z.npz')
+dem = load_dem('datasets/sc_d3_r3_p0001_z.dem')
+syndromes, observables, _ = load_syndrome_database('datasets/sc_d3_r3_p0001_z.npz')
 H, priors, obs_flip = build_parity_check_matrix(dem)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'

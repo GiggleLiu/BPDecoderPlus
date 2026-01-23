@@ -214,22 +214,15 @@ class OSDDecoder:
         Returns:
             Tuple of (augmented matrix in RREF, pivot columns)
         """
-        # Check if cache is valid (same column order)
-        if (self._cached_column_order is not None and
-            np.array_equal(sorted_indices, self._cached_column_order)):
-            # Use cached RREF, only update syndrome column
-            augmented = np.hstack([self._cached_rref, syndrome.reshape(-1, 1)]).astype(np.int8)
-            return augmented, self._cached_pivot_cols
+        # IMPORTANT: Caching disabled due to bug where syndrome column wasn't being
+        # transformed by the same row operations as the cached RREF matrix.
+        # This caused invalid solutions that didn't satisfy the syndrome.
+        # TODO: Implement proper caching by storing row operations and applying them to new syndromes
 
-        # Cache miss - compute new RREF
+        # Always compute fresh RREF
         H_sorted = self.H[:, sorted_indices]
         augmented = np.hstack([H_sorted, syndrome.reshape(-1, 1)]).astype(np.int8)
         pivot_cols = self._compute_rref(augmented)
-
-        # Cache the RREF (without syndrome column)
-        self._cached_rref = augmented[:, :-1].copy()
-        self._cached_pivot_cols = pivot_cols
-        self._cached_column_order = sorted_indices.copy()
 
         return augmented, pivot_cols
 

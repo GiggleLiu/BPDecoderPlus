@@ -5,12 +5,13 @@ from typing import Tuple
 class BatchBPDecoder:
     """Batch Belief Propagation decoder for parallel syndrome processing on GPU."""
 
-    def __init__(self, H: np.ndarray, channel_probs: np.ndarray, device='cuda'):
+    def __init__(self, H: np.ndarray, channel_probs: np.ndarray, device='cuda', ms_scaling_factor: float = 1.0):
         """
         Args:
-            H: Parity check matrix (num_checks, num_qubits)
-            channel_probs: Physical error rates per qubit (num_qubits,)
+            H: Parity check matrix (num_checks, num_errors)
+            channel_probs: Physical error rates per errors (num_errors,)
             device: torch device
+            ms_scaling_factor: Scaling factor for min-sum algorithm (default 1.0 to match ldpc library)
         """
         self.device = torch.device(device)
         self.H = torch.from_numpy(H).to(dtype=torch.float32, device=self.device)
@@ -18,12 +19,59 @@ class BatchBPDecoder:
 
         # Store channel probs
         self.channel_probs = torch.from_numpy(channel_probs).to(dtype=torch.float32, device=self.device)
+        
+        # Min-sum scaling factor (default 1.0 to match ldpc library)
+        self.ms_scaling_factor = ms_scaling_factor
 
         # Build edge lists for message passing
+        #Example: If edge #5 connects Check 2 and Qubit 7, then:
+        # self.check_edges[5] will be 2
+        # self.qubit_edges[5] will be 7
         self.check_edges, self.qubit_edges = torch.where(self.H)
         self.num_edges = len(self.check_edges)
 
-    def decode(self, syndromes: torch.Tensor, max_iter: int = 20, damping: float = 0.2, method: str = 'sum-product') -> torch.Tensor:
+        # Precompute adjacency structures for fast message passing
+        self._precompute_adjacency()
+
+    def _precompute_adjacency(self):
+        """Precompute adjacency structures for vectorized message passing."""
+        # For each check, store which edges belong to it
+        self.check_to_edges = []
+        self.max_check_degree = 0
+        for c in range(self.num_checks):
+            edges = (self.check_edges == c).nonzero(as_tuple=True)[0]
+            self.check_to_edges.append(edges)
+            self.max_check_degree = max(self.max_check_degree, len(edges))
+
+        # For each qubit, store which edges belong to it
+        self.qubit_to_edges = []
+        self.max_qubit_degree = 0
+        for q in range(self.num_qubits):
+            edges = (self.qubit_edges == q).nonzero(as_tuple=True)[0]
+            self.qubit_to_edges.append(edges)
+            self.max_qubit_degree = max(self.max_qubit_degree, len(edges))
+
+        # Create padded tensors for vectorized operations
+        # Check adjacency: (num_checks, max_check_degree)
+        self.check_edge_indices = torch.full((self.num_checks, self.max_check_degree), -1,
+                                              dtype=torch.long, device=self.device)
+        self.check_edge_mask = torch.zeros((self.num_checks, self.max_check_degree),
+                                            dtype=torch.bool, device=self.device)
+        for c, edges in enumerate(self.check_to_edges):
+            self.check_edge_indices[c, :len(edges)] = edges
+            self.check_edge_mask[c, :len(edges)] = True
+
+
+        # Qubit adjacency: (num_qubits, max_qubit_degree)
+        self.qubit_edge_indices = torch.full((self.num_qubits, self.max_qubit_degree), -1,
+                                              dtype=torch.long, device=self.device)
+        self.qubit_edge_mask = torch.zeros((self.num_qubits, self.max_qubit_degree),
+                                            dtype=torch.bool, device=self.device)
+        for q, edges in enumerate(self.qubit_to_edges):
+            self.qubit_edge_indices[q, :len(edges)] = edges
+            self.qubit_edge_mask[q, :len(edges)] = True
+
+    def decode(self, syndromes: torch.Tensor, max_iter: int = 20, damping: float = 0.2, method: str = 'min-sum') -> torch.Tensor:
         """
         Decode batch of syndromes in parallel using BP.
 
@@ -38,206 +86,196 @@ class BatchBPDecoder:
         """
         batch_size = syndromes.shape[0]
         syndromes = syndromes.to(self.device)
+        
+        # Use LLR (log-likelihood ratio) representation for numerical stability
+        # LLR = log(P(0)/P(1)), positive means more likely 0
+        # Initialize channel LLRs
+        channel_llr = torch.log((1 - self.channel_probs + 1e-10) / (self.channel_probs + 1e-10))
 
-        # Initialize messages as probabilities: (batch_size, num_edges, 2)
-        # msg[b, e, 0] = P(qubit=0), msg[b, e, 1] = P(qubit=1)
-        msg_c2q = torch.ones(batch_size, self.num_edges, 2, device=self.device) * 0.5
-        msg_q2c = torch.ones(batch_size, self.num_edges, 2, device=self.device) * 0.5
-
-        # Initialize qubit-to-check with priors
-        for e in range(self.num_edges):
-            q = self.qubit_edges[e]
-            p = self.channel_probs[q]
-            msg_q2c[:, e, 0] = 1 - p
-            msg_q2c[:, e, 1] = p
+        # Messages: (batch_size, num_edges) in LLR form
+        # msg_q2c[b, e] = LLR from qubit to check
+        # msg_c2q[b, e] = LLR from check to qubit
+        msg_q2c = channel_llr[self.qubit_edges].unsqueeze(0).expand(batch_size, -1).clone()
+        msg_c2q = torch.zeros(batch_size, self.num_edges, device=self.device)
 
         for _ in range(max_iter):
-            msg_c2q_new = torch.zeros_like(msg_c2q)
-
-            # Check to qubit messages (sum-product with parity constraint)
-            for c in range(self.num_checks):
-                edge_mask = (self.check_edges == c)
-                edges_in_check = torch.where(edge_mask)[0]
-
-                if len(edges_in_check) == 0:
-                    continue
-
-                # For each edge in this check
-                for i, edge_idx in enumerate(edges_in_check):
-                    # Get other edges
-                    other_edges = [edges_in_check[j] for j in range(len(edges_in_check)) if j != i]
-
-                    if len(other_edges) == 0:
-                        # Single variable check - just pass syndrome
-                        msg_c2q_new[:, edge_idx, 0] = 1 - syndromes[:, c]
-                        msg_c2q_new[:, edge_idx, 1] = syndromes[:, c]
-                    else:
-                        # Compute marginal over other variables satisfying parity
-                        other_msgs = msg_q2c[:, other_edges, :]  # (batch, len(other_edges), 2)
-
-                        if method == 'min-sum':
-                            # Use minimum-sum approximation
-                            msg = self._compute_minsum_check_to_qubit(other_msgs, syndromes[:, c])
-                            msg_c2q_new[:, edge_idx, :] = msg
-                        else:
-                            # Use sum-product (default)
-                            # For x_i=0: sum over configs with parity = syndrome
-                            # For x_i=1: sum over configs with parity = 1-syndrome
-                            p0 = self._compute_parity_marginal(other_msgs, syndromes[:, c], target_parity=0)
-                            p1 = self._compute_parity_marginal(other_msgs, syndromes[:, c], target_parity=1)
-
-                            # Normalize
-                            total = p0 + p1 + 1e-10
-                            msg_c2q_new[:, edge_idx, 0] = p0 / total
-                            msg_c2q_new[:, edge_idx, 1] = p1 / total
+            # Check-to-qubit messages
+            if method == 'min-sum':
+                msg_c2q_new = self._check_to_qubit_minsum(msg_q2c, syndromes)
+            elif method == 'sum-product':
+                msg_c2q_new = self._check_to_qubit_sumproduct(msg_q2c, syndromes)
+            else:
+                raise ValueError(f"Unknown method: {method}. Use 'min-sum' or 'sum-product'.")
 
             # Damping
             msg_c2q = damping * msg_c2q + (1 - damping) * msg_c2q_new
 
-            # Qubit to check messages
-            msg_q2c_new = torch.zeros_like(msg_q2c)
-            for q in range(self.num_qubits):
-                edge_mask = (self.qubit_edges == q)
-                edges_in_qubit = torch.where(edge_mask)[0]
-
-                if len(edges_in_qubit) == 0:
-                    continue
-
-                prior = self.channel_probs[q]
-
-                for i, edge_idx in enumerate(edges_in_qubit):
-                    # Product of prior and all other incoming messages
-                    p0 = torch.ones(batch_size, device=self.device) * (1 - prior)
-                    p1 = torch.ones(batch_size, device=self.device) * prior
-
-                    for j, other_edge in enumerate(edges_in_qubit):
-                        if j != i:
-                            p0 = p0 * msg_c2q[:, other_edge, 0]
-                            p1 = p1 * msg_c2q[:, other_edge, 1]
-
-                    # Normalize
-                    total = p0 + p1 + 1e-10
-                    msg_q2c_new[:, edge_idx, 0] = p0 / total
-                    msg_q2c_new[:, edge_idx, 1] = p1 / total
-
-            msg_q2c = msg_q2c_new
-
-            # Check convergence by syndrome satisfaction
-            # Compute hard decision from current marginals
-            temp_marginals = torch.zeros(batch_size, self.num_qubits, device=self.device)
-            for q in range(self.num_qubits):
-                edge_mask = (self.qubit_edges == q)
-                edges_in_qubit = torch.where(edge_mask)[0]
-                prior = self.channel_probs[q]
-                p0 = torch.ones(batch_size, device=self.device) * (1 - prior)
-                p1 = torch.ones(batch_size, device=self.device) * prior
-                for edge_idx in edges_in_qubit:
-                    p0 = p0 * msg_c2q[:, edge_idx, 0]
-                    p1 = p1 * msg_c2q[:, edge_idx, 1]
-                total = p0 + p1 + 1e-10
-                temp_marginals[:, q] = p1 / total
-
-            decoding = (temp_marginals > 0.5).float()
-            computed_syndrome = (self.H @ decoding.T).T % 2
-            converged = (computed_syndrome == syndromes).all(dim=1)
-            if converged.all():
-                break
+            # Qubit-to-check messages
+            msg_q2c = self._qubit_to_check(msg_c2q, channel_llr)
 
         # Compute marginals
-        marginals = torch.zeros(batch_size, self.num_qubits, device=self.device)
-        for q in range(self.num_qubits):
-            edge_mask = (self.qubit_edges == q)
-            edges_in_qubit = torch.where(edge_mask)[0]
-
-            prior = self.channel_probs[q]
-            p0 = torch.ones(batch_size, device=self.device) * (1 - prior)
-            p1 = torch.ones(batch_size, device=self.device) * prior
-
-            for edge_idx in edges_in_qubit:
-                p0 = p0 * msg_c2q[:, edge_idx, 0]
-                p1 = p1 * msg_c2q[:, edge_idx, 1]
-
-            # Normalize and return P(error=1)
-            total = p0 + p1 + 1e-10
-            marginals[:, q] = p1 / total
+        marginals = self._compute_marginals(msg_c2q, channel_llr)
 
         return marginals
 
-    def _compute_parity_marginal(self, msgs: torch.Tensor, syndrome: torch.Tensor, target_parity: int) -> torch.Tensor:
+    def _check_to_qubit_minsum(self, msg_q2c: torch.Tensor, syndromes: torch.Tensor) -> torch.Tensor:
         """
-        Compute marginal probability that variables have given parity.
+        Compute check-to-qubit messages using min-sum algorithm.
 
         Args:
-            msgs: (batch, num_vars, 2) - probability messages
-            syndrome: (batch,) - observed syndrome
-            target_parity: 0 or 1
+            msg_q2c: (batch_size, num_edges) - qubit-to-check LLRs
+            syndromes: (batch_size, num_checks) - syndrome values
 
         Returns:
-            prob: (batch,) - probability of target parity
+            msg_c2q: (batch_size, num_edges) - check-to-qubit LLRs
         """
-        batch_size, num_vars, _ = msgs.shape
+        batch_size = msg_q2c.shape[0]
+        msg_c2q = torch.zeros(batch_size, self.num_edges, device=self.device)
 
-        if num_vars == 0:
-            return torch.ones(batch_size, device=self.device)
+        # Process each check
+        for c in range(self.num_checks):
+            edges = self.check_to_edges[c]
+            if len(edges) == 0:
+                continue
 
-        # Use dynamic programming to compute parity distribution
-        # dp[b, v, p] = probability that first v variables have parity p
-        dp = torch.zeros(batch_size, num_vars + 1, 2, device=self.device)
-        dp[:, 0, 0] = 1.0  # Base case: 0 variables have parity 0
+            # Get incoming messages for this check: (batch, degree)
+            incoming = msg_q2c[:, edges]
 
-        for v in range(num_vars):
-            for p in range(2):
-                # If variable v is 0, parity stays same
-                dp[:, v + 1, p] += dp[:, v, p] * msgs[:, v, 0]
-                # If variable v is 1, parity flips
-                dp[:, v + 1, 1 - p] += dp[:, v, p] * msgs[:, v, 1]
+            # For each outgoing edge, compute product of signs and min of magnitudes
+            # excluding that edge
+            signs = torch.sign(incoming)  # (batch, degree)
+            mags = torch.abs(incoming)    # (batch, degree)
 
-        # Return probability of desired parity given syndrome
-        desired_parity = (syndrome.long() + target_parity) % 2
-        result = torch.zeros(batch_size, device=self.device)
-        for b in range(batch_size):
-            result[b] = dp[b, num_vars, desired_parity[b]]
+            # Product of all signs
+            total_sign = torch.prod(signs, dim=1, keepdim=True)  # (batch, 1)
 
-        return result
+            # Apply syndrome: flip sign if syndrome is 1
+            syndrome_sign = 1 - 2 * syndromes[:, c:c+1]  # (batch, 1)
+            total_sign = total_sign * syndrome_sign
 
-    def _compute_minsum_check_to_qubit(self, other_msgs: torch.Tensor, syndrome: torch.Tensor, scaling_factor: float = 0.625) -> torch.Tensor:
+            # For each edge, divide out its sign to get product of others
+            outgoing_signs = total_sign / (signs + 1e-10)  # (batch, degree)
+
+            # Min magnitude excluding each edge
+            # Use second minimum trick
+            sorted_mags, _ = torch.sort(mags, dim=1)
+            min_mag = sorted_mags[:, 0:1]      # (batch, 1)
+            second_min = sorted_mags[:, 1:2] if sorted_mags.shape[1] > 1 else min_mag
+
+            # For each edge: if it has the min, use second_min; else use min
+            is_min = (mags == min_mag)
+            outgoing_mags = torch.where(is_min, second_min, min_mag)  # (batch, degree)
+
+            # Apply min-sum scaling factor
+            msg_c2q[:, edges] = self.ms_scaling_factor * outgoing_signs * outgoing_mags
+
+        return msg_c2q
+
+    def _check_to_qubit_sumproduct(self, msg_q2c: torch.Tensor, syndromes: torch.Tensor) -> torch.Tensor:
         """
-        Compute check-to-qubit message using minimum-sum approximation.
+        Compute check-to-qubit messages using sum-product algorithm.
+
+        Uses the formula: LLR_c2q = 2 * atanh(prod_{q' != q} tanh(LLR_q2c / 2))
 
         Args:
-            other_msgs: (batch, num_other_qubits, 2) - messages from other qubits
-            syndrome: (batch,) - syndrome value for this check
-            scaling_factor: Scaling factor for min-sum (default 0.625)
+            msg_q2c: (batch_size, num_edges) - qubit-to-check LLRs
+            syndromes: (batch_size, num_checks) - syndrome values
 
         Returns:
-            msg: (batch, 2) - message to target qubit [P(0), P(1)]
+            msg_c2q: (batch_size, num_edges) - check-to-qubit LLRs
         """
-        batch_size = other_msgs.shape[0]
-        num_other = other_msgs.shape[1]
+        batch_size = msg_q2c.shape[0]
+        msg_c2q = torch.zeros(batch_size, self.num_edges, device=self.device)
 
-        if num_other == 0:
-            # No other qubits - just return syndrome
-            msg = torch.zeros(batch_size, 2, device=self.device)
-            msg[:, 0] = 1 - syndrome
-            msg[:, 1] = syndrome
-            return msg
+        # Process each check
+        for c in range(self.num_checks):
+            edges = self.check_to_edges[c]
+            if len(edges) == 0:
+                continue
 
-        # Convert probabilities to LLRs: LLR = log(P(0)/P(1))
-        llrs = torch.log((other_msgs[:, :, 0] + 1e-10) / (other_msgs[:, :, 1] + 1e-10))
+            # Get incoming messages for this check: (batch, degree)
+            incoming = msg_q2c[:, edges]
 
-        # Compute sign product and minimum magnitude
-        sign_product = torch.prod(torch.sign(llrs), dim=1)  # (batch,)
-        min_magnitude = torch.min(torch.abs(llrs), dim=1)[0]  # (batch,)
+            # Compute tanh(LLR/2) for sum-product
+            # Clamp to avoid numerical issues with tanh
+            half_llr = torch.clamp(incoming / 2, min=-20, max=20)
+            tanh_vals = torch.tanh(half_llr)  # (batch, degree)
 
-        # Apply syndrome: if syndrome=1, flip sign
-        sign_product = sign_product * (1 - 2 * syndrome)
+            # Product of all tanh values
+            total_prod = torch.prod(tanh_vals, dim=1, keepdim=True)  # (batch, 1)
 
-        # Output LLR with scaling
-        output_llr = scaling_factor * sign_product * min_magnitude
+            # Apply syndrome: flip sign if syndrome is 1
+            syndrome_sign = 1 - 2 * syndromes[:, c:c+1]  # (batch, 1)
+            total_prod = total_prod * syndrome_sign
 
-        # Convert back to probabilities
-        prob_0 = torch.sigmoid(output_llr)
-        prob_1 = 1 - prob_0
+            # For each edge, divide out its tanh to get product of others
+            # Add small epsilon to avoid division by zero
+            outgoing_prod = total_prod / (tanh_vals + 1e-10)  # (batch, degree)
 
-        return torch.stack([prob_0, prob_1], dim=1)
+            # Clamp to valid range for atanh (-1, 1)
+            outgoing_prod = torch.clamp(outgoing_prod, min=-1 + 1e-7, max=1 - 1e-7)
+
+            # Convert back: 2 * atanh(prod)
+            msg_c2q[:, edges] = 2 * torch.atanh(outgoing_prod)
+
+        return msg_c2q
+
+    def _qubit_to_check(self, msg_c2q: torch.Tensor, channel_llr: torch.Tensor) -> torch.Tensor:
+        """
+        Compute qubit-to-check messages.
+
+        Args:
+            msg_c2q: (batch_size, num_edges) - check-to-qubit LLRs
+            channel_llr: (num_qubits,) - channel LLRs
+
+        Returns:
+            msg_q2c: (batch_size, num_edges) - qubit-to-check LLRs
+        """
+        batch_size = msg_c2q.shape[0]
+        msg_q2c = torch.zeros(batch_size, self.num_edges, device=self.device)
+
+        # Process each qubit
+        for q in range(self.num_qubits):
+            edges = self.qubit_to_edges[q]
+            if len(edges) == 0:
+                continue
+
+            # Get incoming messages for this qubit: (batch, degree)
+            incoming = msg_c2q[:, edges]
+
+            # Sum of all incoming messages plus channel
+            total_sum = incoming.sum(dim=1, keepdim=True) + channel_llr[q]  # (batch, 1)
+
+            # For each edge, subtract its contribution
+            msg_q2c[:, edges] = total_sum - incoming
+
+        return msg_q2c
+
+    def _compute_marginals(self, msg_c2q: torch.Tensor, channel_llr: torch.Tensor) -> torch.Tensor:
+        """
+        Compute posterior marginals from messages.
+
+        Args:
+            msg_c2q: (batch_size, num_edges) - check-to-qubit LLRs
+            channel_llr: (num_qubits,) - channel LLRs
+
+        Returns:
+            marginals: (batch_size, num_qubits) - P(error=1)
+        """
+        batch_size = msg_c2q.shape[0]
+        marginals = torch.zeros(batch_size, self.num_qubits, device=self.device)
+
+        for q in range(self.num_qubits):
+            edges = self.qubit_to_edges[q]
+
+            # Total LLR = channel + sum of all incoming
+            if len(edges) > 0:
+                total_llr = channel_llr[q] + msg_c2q[:, edges].sum(dim=1)
+            else:
+                total_llr = channel_llr[q].expand(batch_size)
+
+            # Convert LLR to probability: P(1) = 1 / (1 + exp(LLR))
+            marginals[:, q] = torch.sigmoid(-total_llr)
+
+        return marginals
 
