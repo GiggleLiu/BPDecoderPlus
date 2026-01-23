@@ -37,11 +37,19 @@ uv pip install ldpc
 
 ### 2.2 Dataset
 
-The comparison uses the surface code dataset:
+The comparison uses surface code datasets with varying parameters:
+
+**Basic comparison** (Sections 3.1-3.4):
 - **DEM file**: `datasets/sc_d3_r3_p0010_z.dem`
 - **Syndrome database**: `datasets/sc_d3_r3_p0010_z.npz`
 - **Parameters**: distance=3, rounds=3, physical error rate=0.010
 - **Samples**: 1000 syndromes with ground truth observables
+
+**Threshold analysis** (Section 8):
+- **Distances**: d=3, 5, 7, 9, 11, 13 (with r=d rounds each)
+- **Error rates**: 0.0002 to 0.002 (p0002 to p0020)
+- **Sample size**: 2000 syndromes per configuration
+- **Dataset naming**: `datasets/sc_d{d}_r{r}_p{p}_z.{dem,npz}`
 
 ### 2.3 Running the Validation Test
 
@@ -360,7 +368,95 @@ Both implementations are correct and effective for quantum error correction deco
 
 ---
 
-## 7. References
+## 8. Threshold Analysis
+
+### 8.1 Overview
+
+This section presents a threshold analysis comparing BPDecoderPlus and ldpc across multiple code distances and physical error rates. The analysis helps understand decoder performance scaling behavior.
+
+### 8.2 Test Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Distances | d=3, d=5, d=7 |
+| Error rates | 0.0005, 0.0007, 0.001, 0.0015, 0.002 |
+| Samples per point | 2000 |
+| BP iterations | 20 |
+| OSD order | 10 |
+| OSD method | Exhaustive (OSD-E) |
+
+### 8.3 Threshold Comparison Results
+
+![Threshold Comparison](../outputs/threshold_comparison.png)
+
+#### BPDecoderPlus Results
+
+| Distance | Error Rates Tested | Min LER | Max LER |
+|----------|-------------------|---------|---------|
+| d=3 | 5 points (0.0005-0.002) | 0.0015 | 0.0055 |
+| d=5 | 5 points (0.0005-0.002) | 0.0115 | 0.0995 |
+| d=7 | 5 points (0.0005-0.002) | 0.0420 | 0.2870 |
+
+#### ldpc Results
+
+| Distance | Error Rates Tested | Min LER | Max LER |
+|----------|-------------------|---------|---------|
+| d=3 | 5 points (0.0005-0.002) | 0.0035 | 0.0185 |
+| d=5 | 5 points (0.0005-0.002) | 0.0095 | 0.0475 |
+| d=7 | 5 points (0.0005-0.002) | 0.0215 | 0.0675 |
+
+#### Point-by-Point Comparison
+
+| Distance | Error Rate | BPDecoderPlus | ldpc | Diff |
+|----------|------------|---------------|------|------|
+| d=3 | p=0.0005 | 0.0015 | 0.0035 | -0.0020 |
+| d=3 | p=0.0007 | 0.0035 | 0.0155 | -0.0120 |
+| d=3 | p=0.0010 | 0.0015 | 0.0185 | -0.0170 |
+| d=3 | p=0.0015 | 0.0055 | 0.0120 | -0.0065 |
+| d=3 | p=0.0020 | 0.0050 | 0.0095 | -0.0045 |
+| d=5 | p=0.0005 | 0.0115 | 0.0115 | +0.0000 |
+| d=5 | p=0.0007 | 0.0170 | 0.0095 | +0.0075 |
+| d=5 | p=0.0010 | 0.0280 | 0.0240 | +0.0040 |
+| d=5 | p=0.0015 | 0.0545 | 0.0300 | +0.0245 |
+| d=5 | p=0.0020 | 0.0995 | 0.0475 | +0.0520 |
+| d=7 | p=0.0005 | 0.0420 | 0.0215 | +0.0205 |
+| d=7 | p=0.0007 | 0.0700 | 0.0275 | +0.0425 |
+| d=7 | p=0.0010 | 0.1045 | 0.0380 | +0.0665 |
+| d=7 | p=0.0015 | 0.2115 | 0.0610 | +0.1505 |
+| d=7 | p=0.0020 | 0.2870 | 0.0675 | +0.2195 |
+
+### 8.4 Analysis
+
+**Key Observations**:
+
+1. **Small distances (d=3)**: BPDecoderPlus outperforms ldpc consistently, with LER improvements of 0.2-1.7 percentage points across all error rates.
+
+2. **Larger distances (d=5, d=7)**: ldpc achieves lower logical error rates. The gap increases with both distance and error rate, reaching 22% difference at d=7, p=0.002.
+
+3. **Scaling behavior**: ldpc shows better scaling with code distance, suggesting its C++ implementation handles larger parity check matrices more effectively.
+
+**Possible factors**:
+- BPDecoderPlus uses per-qubit priors from DEM, while ldpc uses uniform error rates
+- Different numerical precision between Python and C++ implementations
+- BP convergence behavior differences
+- OSD candidate selection ordering
+
+### 8.5 Running the Threshold Analysis
+
+```bash
+# Generate threshold comparison plots
+uv run pytest tests/test_decoder_threshold.py -v -s
+
+# Output files:
+# - outputs/threshold_plot.png (BPDecoderPlus only)
+# - outputs/threshold_plot_ldpc.png (ldpc only)
+# - outputs/threshold_comparison.png (side-by-side)
+# - outputs/threshold_overlay.png (overlay)
+```
+
+---
+
+## 9. References
 
 1. **ldpc Library**: https://github.com/quantumgizmos/ldpc
 2. **BP+OSD Paper**: Roffe et al., "Decoding across the quantum LDPC code landscape" (2020). [arXiv:2005.07016](https://arxiv.org/abs/2005.07016)
