@@ -1,6 +1,6 @@
 import torch
 
-from src.primitives import IndexMap, argmax_trace, safe_log, tropical_einsum
+from tropical_in_new.src.primitives import IndexMap, argmax_trace, safe_log, tropical_einsum
 
 
 def test_safe_log_zero_to_neg_inf():

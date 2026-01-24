@@ -34,8 +34,8 @@ Public APIs exported from `tropical_in_new/src`.
 - `build_network(factors: Iterable[Factor]) -> list[TensorNode]`
   Convert factors into log-domain tensors with scopes.
 
-- `choose_order(nodes, heuristic="min_fill") -> list[int]`
-  Select variable elimination order (min-fill / min-degree).
+- `choose_order(nodes, heuristic="omeco") -> list[int]`
+  Select variable elimination order using `omeco`.
 
 - `build_contraction_tree(order, nodes) -> ContractionTree`
   Construct a contraction plan from order and nodes.

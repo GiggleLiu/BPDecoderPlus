@@ -33,19 +33,6 @@ class Backpointer:
     argmax_flat: torch.Tensor
 
 
-@dataclass(frozen=True)
-class TropicalTensor:
-    """Lightweight wrapper for tropical (max-plus) tensors."""
-
-    vars: Tuple[int, ...]
-    values: torch.Tensor
-
-    def __add__(self, other: "TropicalTensor") -> "TropicalTensor":
-        if self.vars != other.vars:
-            raise ValueError("TropicalTensor.__add__ requires identical variable order.")
-        return TropicalTensor(self.vars, torch.maximum(self.values, other.values))
-
-
 def safe_log(tensor: torch.Tensor) -> torch.Tensor:
     """Convert potentials to log domain; zeros map to -inf."""
     neg_inf = torch.tensor(float("-inf"), dtype=tensor.dtype, device=tensor.device)
@@ -83,6 +70,12 @@ def tropical_reduce_max(
     if not elim_vars:
         return tensor, None
     target_vars = tuple(vars)
+    missing_elim_vars = [v for v in elim_vars if v not in target_vars]
+    if missing_elim_vars:
+        raise ValueError(
+            "tropical_reduce_max: elim_vars "
+            f"{missing_elim_vars} are not present in vars {target_vars}."
+        )
     elim_axes = [target_vars.index(v) for v in elim_vars]
     keep_axes = [i for i in range(len(target_vars)) if i not in elim_axes]
     perm = keep_axes + elim_axes
@@ -138,6 +131,12 @@ def argmax_trace(backpointer: Backpointer, assignment: Dict[int, int]) -> Dict[i
     if not backpointer.elim_vars:
         return {}
     if backpointer.out_vars:
+        missing = [v for v in backpointer.out_vars if v not in assignment]
+        if missing:
+            raise KeyError(
+                "Missing assignment values for output variables: "
+                f"{missing}. Provided assignment keys: {sorted(assignment.keys())}"
+            )
         idx = tuple(assignment[v] for v in backpointer.out_vars)
         flat = int(backpointer.argmax_flat[idx].item())
     else:

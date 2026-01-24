@@ -37,6 +37,8 @@ def read_model_file(filepath: str, factor_eltype=torch.float64) -> UAIModel:
 def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIModel:
     """Parse UAI model from string."""
     lines = [line.strip() for line in content.split("\n") if line.strip()]
+    if len(lines) < 4:
+        raise ValueError("Malformed UAI model: expected at least 4 header lines.")
     network_type = lines[0]
     if network_type not in ("MARKOV", "BAYES"):
         raise ValueError(
@@ -44,7 +46,13 @@ def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIMode
         )
     nvars = int(lines[1])
     cards = [int(x) for x in lines[2].split()]
+    if len(cards) != nvars:
+        raise ValueError(f"Expected {nvars} cardinalities, got {len(cards)}.")
     ntables = int(lines[3])
+    if len(lines) < 4 + ntables:
+        raise ValueError(
+            f"Malformed UAI model: expected {ntables} scope lines, got {len(lines) - 4}."
+        )
 
     scopes: list[list[int]] = []
     for i in range(ntables):
@@ -71,6 +79,16 @@ def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIMode
             raise ValueError("Unexpected end of UAI factor table data.")
         nelements = int(tokens[cursor])
         cursor += 1
+        expected_size = 1
+        for card in (cards[v - 1] for v in scope):
+            expected_size *= card
+        if nelements != expected_size:
+            raise ValueError(
+                f"Factor table size mismatch for scope {scope}: "
+                f"expected {expected_size}, got {nelements}."
+            )
+        if cursor + nelements > len(tokens):
+            raise ValueError("Unexpected end of UAI factor table data.")
         values = torch.tensor(
             [float(x) for x in tokens[cursor : cursor + nelements]], dtype=factor_eltype
         )
@@ -93,6 +111,10 @@ def read_evidence_file(filepath: str) -> Dict[int, int]:
     last_line = lines[-1].strip()
     parts = [int(x) for x in last_line.split()]
     nobsvars = parts[0]
+    if len(parts) < 1 + 2 * nobsvars:
+        raise ValueError(
+            f"Malformed evidence line: expected {1 + 2 * nobsvars} entries, got {len(parts)}."
+        )
     evidence: Dict[int, int] = {}
     for i in range(nobsvars):
         var_idx = parts[1 + 2 * i] + 1

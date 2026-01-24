@@ -1,10 +1,11 @@
 import torch
 
-from src.mpe import mpe_tropical
-from src.utils import read_model_from_string
+from tropical_in_new.src.mpe import mpe_tropical
+from tropical_in_new.src.utils import read_model_from_string
 
 
 def _brute_force_mpe(cards, factors):
+    # Helper for this two-variable test case.
     best_score = float("-inf")
     best_assignment = None
     for x0 in range(cards[0]):

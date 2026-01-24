@@ -1,8 +1,8 @@
 import torch
 
-from src.contraction import build_contraction_tree, choose_order, contract_tree
-from src.network import TensorNode
-from src.primitives import tropical_einsum
+from tropical_in_new.src.contraction import build_contraction_tree, choose_order, contract_tree
+from tropical_in_new.src.network import TensorNode
+from tropical_in_new.src.primitives import tropical_einsum
 
 
 def test_choose_order_returns_all_vars():
@@ -10,7 +10,7 @@ def test_choose_order_returns_all_vars():
         TensorNode(vars=(1, 2), values=torch.zeros((2, 2))),
         TensorNode(vars=(2, 3), values=torch.zeros((2, 2))),
     ]
-    order = choose_order(nodes, heuristic="min_fill")
+    order = choose_order(nodes, heuristic="omeco")
     assert set(order) == {1, 2, 3}
 
 

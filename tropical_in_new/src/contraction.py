@@ -7,10 +7,7 @@ from typing import Iterable, Tuple
 
 import torch
 
-try:  # Optional heuristic provider
-    import omeco  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    omeco = None
+import omeco
 
 from .network import TensorNode
 from .primitives import Backpointer, tropical_reduce_max
@@ -45,59 +42,86 @@ class ContractionTree:
     nodes: Tuple[TensorNode, ...]
 
 
-def _build_var_graph(nodes: Iterable[TensorNode]) -> dict[int, set[int]]:
-    graph: dict[int, set[int]] = {}
+def _infer_var_sizes(nodes: Iterable[TensorNode]) -> dict[int, int]:
+    sizes: dict[int, int] = {}
     for node in nodes:
-        vars = list(node.vars)
+        for var, dim in zip(node.vars, node.values.shape):
+            if var in sizes and sizes[var] != dim:
+                raise ValueError(
+                    f"Variable {var} has inconsistent sizes: {sizes[var]} vs {dim}."
+                )
+            sizes[var] = int(dim)
+    return sizes
+
+
+def _extract_leaf_index(node_dict: dict) -> int | None:
+    for key in ("leaf", "leaf_index", "index", "tensor"):
+        if key in node_dict:
+            value = node_dict[key]
+            if isinstance(value, int):
+                return value
+    return None
+
+
+def _elim_order_from_tree_dict(tree_dict: dict, ixs: list[list[int]]) -> list[int]:
+    total_counts: dict[int, int] = {}
+    for vars in ixs:
         for var in vars:
-            graph.setdefault(var, set()).update(v for v in vars if v != var)
-    return graph
+            total_counts[var] = total_counts.get(var, 0) + 1
+
+    eliminated: set[int] = set()
+
+    def visit(node: dict) -> tuple[dict[int, int], list[int]]:
+        leaf_index = _extract_leaf_index(node)
+        if leaf_index is not None:
+            counts: dict[int, int] = {}
+            for var in ixs[leaf_index]:
+                counts[var] = counts.get(var, 0) + 1
+            return counts, []
+
+        children = node.get("children", [])
+        if not isinstance(children, list) or not children:
+            return {}, []
+
+        counts: dict[int, int] = {}
+        order: list[int] = []
+        for child in children:
+            child_counts, child_order = visit(child)
+            order.extend(child_order)
+            for var, count in child_counts.items():
+                counts[var] = counts.get(var, 0) + count
+
+        newly_eliminated = [
+            var
+            for var, count in counts.items()
+            if count == total_counts.get(var, 0) and var not in eliminated
+        ]
+        for var in sorted(newly_eliminated):
+            eliminated.add(var)
+            order.append(var)
+        return counts, order
+
+    _, order = visit(tree_dict)
+    remaining = sorted([var for var in total_counts if var not in eliminated])
+    return order + remaining
 
 
-def _min_fill_order(graph: dict[int, set[int]]) -> list[int]:
-    order: list[int] = []
-    graph = {k: set(v) for k, v in graph.items()}
-    while graph:
-        best_var = None
-        best_fill = None
-        best_degree = None
-        for var, neighbors in graph.items():
-            fill = 0
-            neighbor_list = list(neighbors)
-            for i in range(len(neighbor_list)):
-                for j in range(i + 1, len(neighbor_list)):
-                    if neighbor_list[j] not in graph[neighbor_list[i]]:
-                        fill += 1
-            degree = len(neighbors)
-            if best_fill is None or (fill, degree) < (best_fill, best_degree):
-                best_var = var
-                best_fill = fill
-                best_degree = degree
-        if best_var is None:
-            break
-        neighbors = list(graph[best_var])
-        for i in range(len(neighbors)):
-            for j in range(i + 1, len(neighbors)):
-                graph[neighbors[i]].add(neighbors[j])
-                graph[neighbors[j]].add(neighbors[i])
-        for neighbor in neighbors:
-            graph[neighbor].discard(best_var)
-        graph.pop(best_var, None)
-        order.append(best_var)
-    return order
-
-
-def choose_order(nodes: list[TensorNode], heuristic: str = "min_fill") -> list[int]:
-    """Select elimination order over variable indices."""
-    if heuristic == "omeco" and omeco is not None:
-        if hasattr(omeco, "min_fill_order"):
-            return list(omeco.min_fill_order([node.vars for node in nodes]))
-    graph = _build_var_graph(nodes)
-    if heuristic in ("min_fill", "omeco"):
-        return _min_fill_order(graph)
-    if heuristic == "min_degree":
-        return sorted(graph, key=lambda v: len(graph[v]))
-    raise ValueError(f"Unknown heuristic: {heuristic!r}")
+def choose_order(nodes: list[TensorNode], heuristic: str = "omeco") -> list[int]:
+    """Select elimination order over variable indices using omeco."""
+    if heuristic != "omeco":
+        raise ValueError("Only the 'omeco' heuristic is supported.")
+    ixs = [list(node.vars) for node in nodes]
+    sizes = _infer_var_sizes(nodes)
+    method = omeco.GreedyMethod() if hasattr(omeco, "GreedyMethod") else None
+    tree = (
+        omeco.optimize_code(ixs, [], sizes, method)
+        if method is not None
+        else omeco.optimize_code(ixs, [], sizes)
+    )
+    tree_dict = tree.to_dict() if hasattr(tree, "to_dict") else tree
+    if not isinstance(tree_dict, dict):
+        raise ValueError("omeco.optimize_code did not return a usable tree.")
+    return _elim_order_from_tree_dict(tree_dict, ixs)
 
 
 def build_contraction_tree(order: Iterable[int], nodes: list[TensorNode]) -> ContractionTree:

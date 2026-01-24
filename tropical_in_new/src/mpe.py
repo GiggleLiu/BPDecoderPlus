@@ -29,6 +29,14 @@ def recover_mpe_assignment(root) -> Dict[int, int]:
     """Recover MPE assignment from a contraction tree with backpointers."""
     assignment: Dict[int, int] = {}
 
+    def require_vars(required: Iterable[int], available: Dict[int, int]) -> None:
+        missing = [v for v in required if v not in available]
+        if missing:
+            raise KeyError(
+                "Missing assignment values for variables: "
+                f"{missing}. Provided assignment keys: {sorted(available.keys())}"
+            )
+
     def traverse(node, out_assignment: Dict[int, int]) -> None:
         assignment.update(out_assignment)
         if isinstance(node, TensorNode):
@@ -38,6 +46,7 @@ def recover_mpe_assignment(root) -> Dict[int, int]:
                 argmax_trace(node.backpointer, out_assignment) if node.backpointer else {}
             )
             combined = {**out_assignment, **elim_assignment}
+            require_vars(node.child.vars, combined)
             child_assignment = {v: combined[v] for v in node.child.vars}
             traverse(node.child, child_assignment)
             return
@@ -46,7 +55,9 @@ def recover_mpe_assignment(root) -> Dict[int, int]:
                 argmax_trace(node.backpointer, out_assignment) if node.backpointer else {}
             )
             combined = {**out_assignment, **elim_assignment}
+            require_vars(node.left.vars, combined)
             left_assignment = {v: combined[v] for v in node.left.vars}
+            require_vars(node.right.vars, combined)
             right_assignment = {v: combined[v] for v in node.right.vars}
             traverse(node.left, left_assignment)
             traverse(node.right, right_assignment)
@@ -66,7 +77,7 @@ def mpe_tropical(
     factors = build_tropical_factors(model, evidence)
     nodes = build_network(factors)
     if order is None:
-        order = choose_order(nodes, heuristic="min_fill")
+        order = choose_order(nodes, heuristic="omeco")
     tree = build_contraction_tree(order, nodes)
     root = _contract_tree(tree, einsum_fn=tropical_einsum)
     if root.vars:
