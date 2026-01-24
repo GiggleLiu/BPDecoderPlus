@@ -9,7 +9,7 @@ except ImportError:
 
 add_project_root_to_path()
 
-from bpdecoderplus.osd import OSDDecoder
+from bpdecoderplus.batch_osd import BatchOSDDecoder
 from bpdecoderplus.batch_bp import BatchBPDecoder
 from bpdecoderplus.pytorch_bp import BeliefPropagation, _check_syndrome_satisfied
 
@@ -21,7 +21,7 @@ class TestOSDCostFunction(unittest.TestCase):
         """Test that cost function selects minimum weight solution."""
         # Simple 3-bit repetition code: H = [1 1 1]
         H = np.array([[1, 1, 1]], dtype=np.int8)
-        decoder = OSDDecoder(H)
+        decoder = BatchOSDDecoder(H, device='cpu')
 
         # Syndrome = 1 (odd parity)
         syndrome = np.array([1], dtype=np.int8)
@@ -39,7 +39,7 @@ class TestOSDCostFunction(unittest.TestCase):
     def test_cost_function_log_probability(self):
         """Test that cost function uses -log(p) weighting."""
         H = np.array([[1, 1, 0], [0, 1, 1]], dtype=np.int8)
-        decoder = OSDDecoder(H)
+        decoder = BatchOSDDecoder(H, device='cpu')
 
         syndrome = np.array([1, 0], dtype=np.int8)
         error_probs = np.array([0.8, 0.3, 0.2])

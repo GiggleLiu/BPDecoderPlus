@@ -20,7 +20,6 @@ import torch
 from bpdecoderplus.dem import load_dem, build_parity_check_matrix
 from bpdecoderplus.syndrome import load_syndrome_database
 from bpdecoderplus.batch_bp import BatchBPDecoder
-from bpdecoderplus.osd import OSDDecoder
 from bpdecoderplus.batch_osd import BatchOSDDecoder
 
 # Check if CUDA is available
@@ -84,8 +83,8 @@ except ImportError:
 # Configuration
 # Circuit-level depolarizing noise threshold for rotated surface code is ~0.7%.
 # We scan around this threshold to observe the crossing behavior.
-DISTANCES = [3, 5, 7]
-ERROR_RATES = [0.007, 0.009, 0.012]  # Scanning around ~0.7% threshold
+DISTANCES = [3, 5, 7, 9]
+ERROR_RATES = [0.001, 0.003, 0.005, 0.007, 0.009, 0.012, 0.015]  # Scanning around ~0.7% threshold
 ITER = 60  # Increased for complex circuit-level factor graphs
 SAMPLE_SIZE = 5000
 
@@ -177,40 +176,6 @@ def run_ldpc_decoder(H, syndromes, observables, obs_flip, error_rate=0.01,
     return errors / len(syndromes)
 
 
-def run_bpdecoderplus(H, syndromes, observables, obs_flip, priors,
-                      osd_order=10, max_iter=ITER):
-    """
-    Run BPDecoderPlus BP+OSD decoder.
-
-    Args:
-        H: Parity check matrix
-        syndromes: Array of syndromes to decode
-        observables: Ground truth observable values
-        obs_flip: Observable flip indicators per error
-        priors: Per-qubit error probabilities
-        osd_order: OSD search depth
-        max_iter: Maximum BP iterations
-
-    Returns:
-        Logical error rate
-    """
-    bp_decoder = BatchBPDecoder(H, priors, device='cpu')
-    osd_decoder = OSDDecoder(H)
-
-    batch_syndromes = torch.from_numpy(syndromes).float()
-    marginals = bp_decoder.decode(batch_syndromes, max_iter=max_iter, damping=0.2)
-
-    errors = 0
-    for i in range(len(syndromes)):
-        probs = marginals[i].cpu().numpy()
-        result = osd_decoder.solve(syndromes[i], probs, osd_order=osd_order)
-        predicted_obs = compute_observable_prediction(result, obs_flip)
-        if predicted_obs != observables[i]:
-            errors += 1
-
-    return errors / len(syndromes)
-
-
 def load_dataset(distance: int, error_rate: float, verbose: bool = False):
     """
     Load dataset for given distance and error rate.
@@ -247,7 +212,7 @@ def load_dataset(distance: int, error_rate: float, verbose: bool = False):
     return H, syndromes, observables, priors, obs_flip
 
 
-def collect_threshold_data(osd_order: int = 10, max_samples: int = SAMPLE_SIZE, use_gpu: bool = True):
+def collect_threshold_data(osd_order: int = 10, max_samples: int = SAMPLE_SIZE):
     """
     Collect logical error rates for threshold analysis using GPU batch processing.
 
@@ -275,18 +240,12 @@ def collect_threshold_data(osd_order: int = 10, max_samples: int = SAMPLE_SIZE, 
             H, syndromes, observables, priors, obs_flip = data
             num_samples = min(max_samples, len(syndromes))
 
-            if use_gpu:
-                ler = run_bpdecoderplus_gpu_batch(
-                    H, syndromes[:num_samples],
-                    observables[:num_samples], obs_flip, priors,
-                    osd_order=osd_order
-                )
-            else:
-                ler = run_bpdecoderplus(
-                    H, syndromes[:num_samples],
-                    observables[:num_samples], obs_flip, priors,
-                    osd_order=osd_order
-                )
+            ler = run_bpdecoderplus_gpu_batch(
+                H, syndromes[:num_samples],
+                observables[:num_samples], obs_flip, priors,
+                osd_order=osd_order
+            )
+
             results[d][p] = ler
             print(f"  d={d}, p={p}: LER={ler:.4f} ({num_samples} samples)")
 
@@ -505,7 +464,7 @@ def main():
 
     # Collect BPDecoderPlus results
     print("\n[BPDecoderPlus]")
-    bp_results = collect_threshold_data(osd_order=10, max_samples=SAMPLE_SIZE, use_gpu=True)
+    bp_results = collect_threshold_data(osd_order=10, max_samples=SAMPLE_SIZE)
 
     # Check we have at least some data
     bp_points = sum(len(v) for v in bp_results.values())
