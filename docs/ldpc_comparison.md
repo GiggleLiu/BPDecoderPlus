@@ -85,7 +85,7 @@ from ldpc import BpOsdDecoder
 from bpdecoderplus.dem import load_dem, build_parity_check_matrix
 from bpdecoderplus.syndrome import load_syndrome_database
 from bpdecoderplus.batch_bp import BatchBPDecoder
-from bpdecoderplus.osd import OSDDecoder
+from bpdecoderplus.batch_osd import BatchOSDDecoder
 
 # Load data
 dem = load_dem('datasets/sc_d3_r3_p0010_z.dem')
@@ -115,7 +115,7 @@ print(f"ldpc LER: {ldpc_errors / num_samples:.2%}")
 
 # Run BPDecoderPlus
 bp_decoder = BatchBPDecoder(H, priors, device='cpu')
-osd_decoder = OSDDecoder(H)
+osd_decoder = BatchOSDDecoder(H, device='cpu')
 
 batch_syndromes = torch.from_numpy(syndromes[:num_samples]).float()
 marginals = bp_decoder.decode(batch_syndromes, max_iter=20, damping=0.2)
@@ -124,7 +124,7 @@ bp_errors = 0
 for i in range(num_samples):
     probs = marginals[i].cpu().numpy()
     result = osd_decoder.solve(syndromes[i], probs, osd_order=10)
-    predicted_obs = np.dot(result, obs_flip) % 2
+    predicted_obs = int(np.dot(result, obs_flip) % 2)
     if predicted_obs != observables[i]:
         bp_errors += 1
 

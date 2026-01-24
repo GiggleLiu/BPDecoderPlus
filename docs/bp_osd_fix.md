@@ -70,14 +70,14 @@ import torch
 from bpdecoderplus.dem import load_dem, build_parity_check_matrix
 from bpdecoderplus.syndrome import load_syndrome_database
 from bpdecoderplus.batch_bp import BatchBPDecoder
-from bpdecoderplus.osd import OSDDecoder
+from bpdecoderplus.batch_osd import BatchOSDDecoder
 
 dem = load_dem('datasets/sc_d3_r3_p0010_z.dem')
 syndromes, observables, _ = load_syndrome_database('datasets/sc_d3_r3_p0010_z.npz')
 H, priors, obs_flip = build_parity_check_matrix(dem)
 
 bp_decoder = BatchBPDecoder(H, priors, device='cpu')
-osd_decoder = OSDDecoder(H)
+osd_decoder = BatchOSDDecoder(H, device='cpu')
 
 # Test 100 samples
 num_samples = 100
@@ -87,8 +87,8 @@ marginals = bp_decoder.decode(batch_syndromes, max_iter=20, damping=0.2)
 pred_bp, pred_osd = [], []
 for i in range(num_samples):
     probs = marginals[i].cpu().numpy()
-    pred_bp.append(np.dot((probs > 0.5).astype(int), obs_flip) % 2)
-    pred_osd.append(np.dot(osd_decoder.solve(syndromes[i], probs, osd_order=10), obs_flip) % 2)
+    pred_bp.append(int(np.dot((probs > 0.5).astype(int), obs_flip) % 2))
+    pred_osd.append(int(np.dot(osd_decoder.solve(syndromes[i], probs, osd_order=10), obs_flip) % 2))
 
 ler_bp = np.mean(np.array(pred_bp) != observables[:num_samples])
 ler_osd = np.mean(np.array(pred_osd) != observables[:num_samples])
