@@ -162,8 +162,7 @@ class TestBuildParityCheckMatrix:
 
         assert H.dtype == np.uint8
         assert priors.dtype == np.float64
-        # obs_flip is float64 with hyperedge merging (conditional probability)
-        assert obs_flip.dtype == np.float64
+        assert obs_flip.dtype == np.uint8
 
     def test_matrix_values(self):
         """Test matrix value ranges."""
@@ -174,8 +173,7 @@ class TestBuildParityCheckMatrix:
 
         assert np.all((H == 0) | (H == 1))
         assert np.all((priors >= 0) & (priors <= 1))
-        # obs_flip is probability [0, 1] with hyperedge merging
-        assert np.all((obs_flip >= 0) & (obs_flip <= 1))
+        assert np.all((obs_flip == 0) | (obs_flip == 1))
 
 
 class TestGenerateDemFromCircuit:
