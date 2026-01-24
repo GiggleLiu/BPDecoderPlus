@@ -64,7 +64,11 @@ def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIMode
                 f"declared {scope_size}, found {len(parts) - 1} variables."
             )
         scope = [int(x) + 1 for x in parts[1:]]
+        assert all(1 <= v <= nvars for v in scope), (
+            f"Scope variables out of range [1, {nvars}]: {scope}"
+        )
         scopes.append(scope)
+    assert len(scopes) == ntables
 
     idx = 4 + ntables
     tokens: List[str] = []
@@ -95,8 +99,10 @@ def read_model_from_string(content: str, factor_eltype=torch.float64) -> UAIMode
         cursor += nelements
         shape = tuple([cards[v - 1] for v in scope])
         values = values.reshape(shape)
+        assert values.shape == shape
         factors.append(Factor(tuple(scope), values))
 
+    assert len(factors) == ntables
     return UAIModel(nvars, cards, factors)
 
 
@@ -119,7 +125,9 @@ def read_evidence_file(filepath: str) -> Dict[int, int]:
     for i in range(nobsvars):
         var_idx = parts[1 + 2 * i] + 1
         var_value = parts[2 + 2 * i]
+        assert var_idx >= 1, f"Invalid variable index: {var_idx - 1}"
         evidence[var_idx] = var_value
+    assert len(evidence) == nobsvars
     return evidence
 
 

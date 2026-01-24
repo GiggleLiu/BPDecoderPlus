@@ -143,18 +143,24 @@ def contract_tree(
         bucket_ids = {id(node) for node in bucket}
         active_nodes = [node for node in active_nodes if id(node) not in bucket_ids]
         combined: TreeNode = bucket[0]
-        for other in bucket[1:]:
-            index_map = build_index_map(combined.vars, other.vars, elim_vars=())
-            values, _ = einsum_fn(combined.values, other.values, index_map, track_argmax=False)
+        for i, other in enumerate(bucket[1:]):
+            is_last = i == len(bucket) - 2
+            elim_vars = (var,) if is_last else ()
+            index_map = build_index_map(combined.vars, other.vars, elim_vars=elim_vars)
+            values, backpointer = einsum_fn(
+                combined.values, other.values, index_map,
+                track_argmax=track_argmax if is_last else False,
+            )
             combined = ContractNode(
                 vars=index_map.out_vars,
                 values=values,
                 left=combined,
                 right=other,
-                elim_vars=(),
-                backpointer=None,
+                elim_vars=elim_vars,
+                backpointer=backpointer,
             )
         if var in combined.vars:
+            # Single-node bucket: eliminate via reduce
             values, backpointer = tropical_reduce_max(
                 combined.values, combined.vars, (var,), track_argmax=track_argmax
             )
