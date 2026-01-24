@@ -26,53 +26,6 @@ from bpdecoderplus.batch_osd import BatchOSDDecoder
 CUDA_AVAILABLE = torch.cuda.is_available()
 
 
-def compute_observable_prediction(solution: np.ndarray, obs_flip: np.ndarray) -> int:
-    """
-    Compute observable prediction using soft XOR probability chain.
-
-    When hyperedges are merged, obs_flip stores conditional probabilities
-    P(obs flip | hyperedge fires). This function correctly computes
-    P(odd number of observable flips) by chaining XOR probabilities.
-
-    Args:
-        solution: Binary error pattern from decoder
-        obs_flip: Observable flip probabilities (0.0 to 1.0)
-
-    Returns:
-        Predicted observable value (0 or 1)
-    """
-    p_flip = 0.0
-    for i in range(len(solution)):
-        if solution[i] == 1:
-            # XOR probability: P(odd flips so far) XOR P(this flips)
-            # P(A XOR B) = P(A)(1-P(B)) + P(B)(1-P(A))
-            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
-    return int(p_flip > 0.5)
-
-
-def compute_observable_predictions_batch(solutions: np.ndarray, obs_flip: np.ndarray) -> np.ndarray:
-    """
-    Compute observable predictions for a batch of solutions using soft XOR.
-
-    Vectorized version of soft XOR probability computation.
-
-    Args:
-        solutions: Batch of binary error patterns, shape (batch, n_errors)
-        obs_flip: Observable flip probabilities (0.0 to 1.0)
-
-    Returns:
-        Predicted observable values, shape (batch,)
-    """
-    batch_size = solutions.shape[0]
-    predictions = np.zeros(batch_size, dtype=int)
-    for b in range(batch_size):
-        p_flip = 0.0
-        # Only iterate over active hyperedges (where solution[b,i] == 1)
-        for i in np.where(solutions[b] == 1)[0]:
-            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
-        predictions[b] = int(p_flip > 0.5)
-    return predictions
-
 # Check if ldpc is available
 try:
     from ldpc import BpOsdDecoder
@@ -126,8 +79,8 @@ def run_bpdecoderplus_gpu_batch(H, syndromes, observables, obs_flip, priors,
         marginals_np = marginals.cpu().numpy()
         solutions = osd_decoder.solve_batch(chunk_syndromes, marginals_np, osd_order=osd_order)
 
-        # Compute predictions (handles fractional obs_flip from hyperedge merging)
-        predictions = compute_observable_predictions_batch(solutions, obs_flip)
+        # Binary observable prediction: mod-2 dot product
+        predictions = (solutions @ obs_flip) % 2
         total_errors += np.sum(predictions != chunk_observables)
 
         # Free GPU memory
@@ -169,21 +122,20 @@ def run_ldpc_decoder(H, syndromes, observables, obs_flip, error_rate=0.01,
     errors = 0
     for i, syndrome in enumerate(syndromes):
         result = ldpc_decoder.decode(syndrome.astype(np.uint8))
-        predicted_obs = compute_observable_prediction(result, obs_flip)
+        predicted_obs = int(np.dot(result, obs_flip) % 2)
         if predicted_obs != observables[i]:
             errors += 1
 
     return errors / len(syndromes)
 
 
-def load_dataset(distance: int, error_rate: float, verbose: bool = False):
+def load_dataset(distance: int, error_rate: float):
     """
     Load dataset for given distance and error rate.
 
     Args:
         distance: Code distance
         error_rate: Physical error rate
-        verbose: If True, print diagnostic info about obs_flip distribution
 
     Returns:
         Tuple of (H, syndromes, observables, priors, obs_flip) or None if not found
@@ -201,13 +153,6 @@ def load_dataset(distance: int, error_rate: float, verbose: bool = False):
     dem = load_dem(str(dem_path))
     syndromes, observables, _ = load_syndrome_database(str(npz_path))
     H, priors, obs_flip = build_parity_check_matrix(dem)
-
-    # Diagnostic output for obs_flip distribution
-    if verbose:
-        print(f"    obs_flip range: [{obs_flip.min():.4f}, {obs_flip.max():.4f}]")
-        near_half = np.sum((obs_flip > 0.3) & (obs_flip < 0.7))
-        print(f"    obs_flip near 0.5 (0.3-0.7): {near_half}/{len(obs_flip)}")
-        print(f"    obs_flip == 0: {np.sum(obs_flip == 0)}, == 1: {np.sum(obs_flip == 1)}")
 
     return H, syndromes, observables, priors, obs_flip
 
@@ -228,11 +173,8 @@ def collect_threshold_data(osd_order: int = 10, max_samples: int = SAMPLE_SIZE):
 
     for d in DISTANCES:
         results[d] = {}
-        first_for_distance = True
         for p in ERROR_RATES:
-            # Print obs_flip diagnostic on first dataset for each distance
-            data = load_dataset(d, p, verbose=first_for_distance)
-            first_for_distance = False
+            data = load_dataset(d, p)
             if data is None:
                 print(f"  Dataset d={d}, p={p} not found, skipping")
                 continue
