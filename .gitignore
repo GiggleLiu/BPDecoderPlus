@@ -52,3 +52,5 @@ docs/*.typ
 # Dataset-specific
 *.npz.tmp
 *.stim.bak
+
+/.claude

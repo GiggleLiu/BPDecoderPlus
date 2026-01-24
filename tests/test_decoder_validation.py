@@ -20,7 +20,7 @@ import pytest
 from bpdecoderplus.dem import load_dem, build_parity_check_matrix
 from bpdecoderplus.syndrome import load_syndrome_database
 from bpdecoderplus.batch_bp import BatchBPDecoder
-from bpdecoderplus.osd import OSDDecoder
+from bpdecoderplus.batch_osd import BatchOSDDecoder
 
 # Check if ldpc is available
 try:
@@ -84,7 +84,7 @@ def run_bpdecoderplus(H, syndromes, observables, obs_flip, priors,
         Logical error rate
     """
     bp_decoder = BatchBPDecoder(H, priors, device='cpu')
-    osd_decoder = OSDDecoder(H)
+    osd_decoder = BatchOSDDecoder(H, device='cpu')
 
     batch_syndromes = torch.from_numpy(syndromes).float()
     marginals = bp_decoder.decode(batch_syndromes, max_iter=max_iter, damping=0.2)
@@ -106,8 +106,8 @@ class TestDecoderValidation:
     @pytest.fixture
     def load_d3_data(self):
         """Load d=3 dataset."""
-        dem = load_dem('datasets/sc_d3_r3_p0010_z.dem')
-        syndromes, observables, _ = load_syndrome_database('datasets/sc_d3_r3_p0010_z.npz')
+        dem = load_dem('datasets/sc_d3_r3_p0100_z.dem')
+        syndromes, observables, _ = load_syndrome_database('datasets/sc_d3_r3_p0100_z.npz')
         H, priors, obs_flip = build_parity_check_matrix(dem)
         return H, syndromes, observables, priors, obs_flip
 

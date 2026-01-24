@@ -18,8 +18,10 @@ from bpdecoderplus.syndrome import sample_syndromes, save_syndrome_database
 from bpdecoderplus.dem import extract_dem, build_parity_check_matrix
 
 # Configuration for threshold analysis
-DISTANCES = [3, 5, 7, 9, 11, 13]
-ERROR_RATES = [0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007, 0.001, 0.0015, 0.002]
+# Circuit-level threshold is ~0.5-1% per noise source, so total ~0.1-0.25%.
+# Test error rates spanning below and above threshold.
+DISTANCES = [3, 5, 7, 9, 11]
+ERROR_RATES = [0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007, 0.001, 0.0015, 0.002, 0.003, 0.005, 0.007, 0.009, 0.01, 0.012, 0.015]
 NUM_SHOTS = 20000
 
 
@@ -56,7 +58,7 @@ def generate_dataset(distance: int, error_rate: float, num_shots: int, output_di
     # Extract DEM
     dem = extract_dem(circuit)
 
-    # Build parity check matrix
+    # Build unseparated parity check matrix
     H, priors, obs_flip = build_parity_check_matrix(dem)
 
     # Sample syndromes

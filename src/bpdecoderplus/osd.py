@@ -95,15 +95,19 @@ class OSDDecoder:
         # Clip probabilities to avoid numerical issues
         probs = np.clip(probs, 1e-10, 1 - 1e-10)
 
-        # Add a small perturbation to prevent sorting uncertainty
-        if random_seed is not None:
-            np.random.seed(random_seed)
-        probs += np.random.uniform(0, 1e-6, size=self.num_errors)
-
         # 2. Sort (Soft Decision)
-        # Sort by reliability: |p - 0.5| descending (most reliable first)
-        reliability = np.abs(probs - 0.5)
-        sorted_indices = np.argsort(reliability)[::-1]
+        # For quantum error correction with low error rates, sort by probability descending.
+        # This ensures high-probability errors (those BP identified as likely errors)
+        # are placed first and become pivots in RREF. Low-probability errors become
+        # free variables and are set to 0 in OSD-0.
+        #
+        # Note: Traditional OSD uses |p - 0.5| (reliability), but this doesn't work
+        # well for quantum codes where:
+        # - Most errors have p ≈ 0 → reliability ≈ 0.5
+        # - Identified errors have p ≈ 1 → reliability ≈ 0.5
+        # Both have similar reliability despite being very different!
+        # Sorting by probability directly is more appropriate for this use case.
+        sorted_indices = np.argsort(probs)[::-1]  # Highest probability first
         
         # 3. Build the augmented matrix [H_sorted | s] and compute RREF
         # Use caching to avoid recomputing RREF for same column order
@@ -146,14 +150,17 @@ class OSDDecoder:
             final_solution_sorted = solution_base
         else:
             # --- OSD-E (Exhaustive Search) Core logic ---
-            # Search over the least reliable (most uncertain) free variables
-
-            # Select free variables with lowest reliability (closest to 0.5)
-            free_cols_with_reliability = [(col, reliability[sorted_indices[col]]) for col in free_cols]
-            # Sort by reliability (ascending - least reliable first)
-            free_cols_with_reliability.sort(key=lambda x: x[1])
-            # Select least reliable osd_order free variables
-            search_cols = [col for col, _ in free_cols_with_reliability[:osd_order]]
+            # Search over free variables with highest probability (most suspicious).
+            # Since we sorted by probability descending, free_cols are already ordered
+            # with highest-probability free variables first (lowest indices in free_cols).
+            # So we just take the first osd_order free variables.
+            
+            # Get probabilities of free variables in sorted order
+            free_cols_with_prob = [(col, probs[sorted_indices[col]]) for col in free_cols]
+            # Sort by probability descending (highest first - most suspicious)
+            free_cols_with_prob.sort(key=lambda x: -x[1])
+            # Select top osd_order free variables
+            search_cols = [col for col, _ in free_cols_with_prob[:osd_order]]
             min_cost = float('inf')  # Initialize to infinity for soft-weighted cost
             best_solution_sorted = None
 
