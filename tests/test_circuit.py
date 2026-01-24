@@ -167,9 +167,9 @@ class TestGenerateFilename:
     def test_basic_filename(self):
         """Test basic filename generation."""
         filename = generate_filename(distance=3, rounds=5, p=0.01, task="z")
-        assert filename == "sc_d3_r5_p0010_z.stim"
+        assert filename == "sc_d3_r5_p0100_z.stim"
 
     def test_x_task(self):
         """Test filename with x task."""
         filename = generate_filename(distance=5, rounds=7, p=0.001, task="x")
-        assert filename == "sc_d5_r7_p0001_x.stim"
+        assert filename == "sc_d5_r7_p0010_x.stim"

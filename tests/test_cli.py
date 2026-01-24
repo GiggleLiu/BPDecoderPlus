@@ -59,7 +59,7 @@ class TestMain:
             assert result == 0
 
             # Check output file exists
-            output_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0010_z.stim"
+            output_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0100_z.stim"
             assert output_file.exists()
 
     def test_multiple_rounds(self):
@@ -74,7 +74,7 @@ class TestMain:
 
             # Check all output files exist
             for r in [3, 5, 7]:
-                output_file = pathlib.Path(tmpdir) / f"sc_d3_r{r}_p0010_z.stim"
+                output_file = pathlib.Path(tmpdir) / f"sc_d3_r{r}_p0100_z.stim"
                 assert output_file.exists()
 
     def test_invalid_p_returns_error(self):
@@ -100,7 +100,7 @@ class TestMain:
             ])
             assert result == 0
 
-            output_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0010_x.stim"
+            output_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0100_x.stim"
             assert output_file.exists()
 
     def test_with_smoke_test(self):
