@@ -102,12 +102,6 @@ def tropical_einsum(
     track_argmax: bool = True,
 ) -> tuple[torch.Tensor, Backpointer | None]:
     """Binary tropical contraction: add in log-space, max over elim_vars."""
-    if tropical_gemm is not None and hasattr(tropical_gemm, "einsum"):
-        try:  # pragma: no cover - optional dependency
-            return tropical_gemm.einsum(a, b, index_map, track_argmax=track_argmax)
-        except Exception:
-            pass
-
     target_vars = tuple(dict.fromkeys(index_map.a_vars + index_map.b_vars))
     expected_out = tuple(v for v in target_vars if v not in index_map.elim_vars)
     if index_map.out_vars and index_map.out_vars != expected_out:
