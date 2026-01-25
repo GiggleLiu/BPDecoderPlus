@@ -93,7 +93,17 @@ def load_syndrome_database(
 
     metadata = None
     if "metadata" in data:
-        metadata = json.loads(str(data["metadata"][0]))
+        meta_arr = data["metadata"]
+        # Handle both 0-dimensional and 1-dimensional arrays
+        if meta_arr.ndim == 0:
+            meta_value = meta_arr.item()
+        else:
+            meta_value = meta_arr[0]
+        # Handle dict (pickled) or string (JSON)
+        if isinstance(meta_value, dict):
+            metadata = meta_value
+        else:
+            metadata = json.loads(str(meta_value))
 
     return syndromes, observables, metadata
 

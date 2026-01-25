@@ -19,7 +19,8 @@ from .belief_propagation import (
     process_message,
     belief_propagate,
     compute_marginals,
-    apply_evidence
+    apply_evidence,
+    _check_syndrome_satisfied
 )
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     'belief_propagate',
     'compute_marginals',
     'apply_evidence',
+    '_check_syndrome_satisfied',
 ]

@@ -52,5 +52,7 @@ nav:
   - Home: index.md
   - Getting Started: getting_started.md
   - Usage Guide: usage_guide.md
+  - Tutorials:
+      - Tanner Graph Walkthrough: tanner_graph_walkthrough.md
   - API Reference: api_reference.md
   - Mathematical Description: mathematical_description.md

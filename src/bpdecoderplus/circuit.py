@@ -42,9 +42,9 @@ def prob_tag(p: float) -> str:
     Returns:
         String tag (e.g., "p0010" for p=0.01).
     """
-    # Format as 3 decimal places without decimal point
-    # e.g., 0.01 -> "p0010", 0.001 -> "p0001"
-    return f"p{p:.3f}".replace(".", "")
+    # Format as 4 decimal places, removing "0." prefix
+    # e.g., 0.01 -> "p0100", 0.001 -> "p0010"
+    return "p" + f"{p:.4f}"[2:]
 
 
 def generate_circuit(

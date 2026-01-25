@@ -414,8 +414,6 @@ $ p_l = log (1 - p) / p $
 
 Since $p < 0.5$ in practice, we have $p_l > 0$.
 
-#pagebreak()
-
 == BP Algorithm: Step-by-Step
 
 #let step-box(num, title, content) = {
@@ -442,12 +440,25 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
 
 *Why?* Before any message passing, the only information we have about each bit is from the *channel itself*. Since each bit flips independently with probability $p$, the initial belief is simply the channel's prior: "this bit is probably correct" (because $p < 0.5$, so $p_l > 0$).
 
+*Code:* The implementation adds small epsilon values for numerical stability:
+```python
+# Initialize channel LLRs
+channel_llr = torch.log((1 - channel_probs + 1e-10) / (channel_probs + 1e-10))
+
+# Initialize qubit-to-check messages with channel prior
+msg_q2c = channel_llr[qubit_edges].unsqueeze(0).expand(batch_size, -1).clone()
+msg_c2q = torch.zeros(batch_size, num_edges, device=device)
+```
+
 #v(0.5em)
 
 #step-box(2, "Parity-to-Data Messages")[
   Each parity node $u_i$ sends a message to each connected data node $v_j$:
+  - *Min-sum form:*
+   $ m_(u_i arrow.r v_j) = (-1)^(s_i) dot alpha dot product_(v'_j in V(u_i) backslash v_j) "sign"(m_(v'_j arrow.r u_i)) dot min_(v'_j in V(u_i) backslash v_j) |m_(v'_j arrow.r u_i)| $ 
 
-  $ m_(u_i arrow.r v_j) = (-1)^(s_i) dot alpha dot product_(v'_j in V(u_i) backslash v_j) "sign"(m_(v'_j arrow.r u_i)) dot min_(v'_j in V(u_i) backslash v_j) |m_(v'_j arrow.r u_i)| $
+  - *Sum-Product form:*
+  $ m_(u_i arrow.r v_j) = (-1)^(s_i) dot 2 tanh^(-1) lr(( product_(v'_j in V(u_i) backslash v_j) tanh lr(( m_(v'_j arrow.r u_i) / 2 )) )) $ 
 
   Where:
   - $s_i$ = the $i$-th syndrome bit (given as input, either 0 or 1)
@@ -457,6 +468,7 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
 ]
 
 *Why?* A parity check enforces that XOR of all connected bits equals the syndrome bit $s_i$. The check node tells $v_j$: "Based on what I know about the *other* bits, here's how likely *you* are to be flipped."
+If $s_i = 0$, the parity check says "even number of flipped bits." If the other bits all look correct (positive LLR), then $v_j$ should also be correct. If one other bit looks flipped (negative LLR), then $v_j$ should be correct to maintain even parity. The formula computes this XOR-like logic in LLR form.
 
 #figure(
   canvas(length: 1cm, {
@@ -496,7 +508,93 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
   caption: [Parity-to-data message: $u_i$ uses info from all neighbors *except* $v_j$ to tell $v_j$ what it should be]
 )
 
-*Intuition:* If $s_i = 0$, the parity check says "even number of flipped bits." If the other bits all look correct (positive LLR), then $v_j$ should also be correct. If one other bit looks flipped (negative LLR), then $v_j$ should be correct to maintain even parity. The formula computes this XOR-like logic in LLR form.
+*Code:* The implementation computes signs and magnitudes separately, using a sorting trick to efficiently find the minimum excluding each edge:
+
+```python
+def _check_to_qubit_minsum(self, msg_q2c, syndromes):
+    for c in range(num_checks):
+        edges = self.check_to_edges[c]
+        incoming = msg_q2c[:, edges]  # (batch, degree)
+
+        # Separate signs and magnitudes
+        signs = torch.sign(incoming)  # (batch, degree)
+        mags = torch.abs(incoming)    # (batch, degree)
+
+        # Product of all signs
+        total_sign = torch.prod(signs, dim=1, keepdim=True)
+
+        # Apply syndrome: flip sign if syndrome is 1
+        syndrome_sign = 1 - 2 * syndromes[:, c:c+1]
+        total_sign = total_sign * syndrome_sign
+
+        # For each edge, divide out its sign to get product of others
+        outgoing_signs = total_sign / (signs + 1e-10)
+
+        # Min magnitude excluding each edge (second minimum trick)
+        sorted_mags, _ = torch.sort(mags, dim=1)
+        min_mag = sorted_mags[:, 0:1]
+        second_min = sorted_mags[:, 1:2] if sorted_mags.shape[1] > 1 else min_mag
+
+        # If edge has the min, use second_min; else use min
+        is_min = (mags == min_mag)
+        outgoing_mags = torch.where(is_min, second_min, min_mag)
+
+        # Apply scaling factor
+        scaling = 0.625
+        msg_c2q[:, edges] = scaling * outgoing_signs * outgoing_mags
+```
+
+#keypoint[
+  *Second Minimum Trick:* To compute $min_(v'_j eq.not v_j) |m_(v'_j)|$ efficiently, we sort all magnitudes once. For each edge: if it holds the minimum, use the second minimum; otherwise use the first minimum. This avoids recomputing $O(d)$ minimums for each of $d$ edges.
+]
+
+*Sum-Product Code:* The sum-product variant uses the tanh identity for exact computation:
+
+```python
+def _check_to_qubit_sumproduct(self, msg_q2c, syndromes):
+    for c in range(num_checks):
+        edges = self.check_to_edges[c]
+        incoming = msg_q2c[:, edges]  # (batch, degree)
+
+        # Compute tanh(LLR/2) - clamp for numerical stability
+        half_llr = torch.clamp(incoming / 2, min=-20, max=20)
+        tanh_vals = torch.tanh(half_llr)  # (batch, degree)
+
+        # Product of all tanh values
+        total_prod = torch.prod(tanh_vals, dim=1, keepdim=True)
+
+        # Apply syndrome: flip sign if syndrome is 1
+        syndrome_sign = 1 - 2 * syndromes[:, c:c+1]
+        total_prod = total_prod * syndrome_sign
+
+        # For each edge, divide out its tanh contribution
+        outgoing_prod = total_prod / (tanh_vals + 1e-10)
+
+        # Clamp to valid range for atanh (-1, 1)
+        outgoing_prod = torch.clamp(outgoing_prod, min=-1+1e-7, max=1-1e-7)
+
+        # Convert back: 2 * atanh(prod)
+        msg_c2q[:, edges] = 2 * torch.atanh(outgoing_prod)
+```
+
+#keypoint[
+  *Min-Sum vs Sum-Product:* Min-sum is an *approximation* of sum-product, not an equivalent algorithm. The relationship comes from the identity:
+  $ 2 tanh^(-1) lr(( product_i tanh(x_i \/ 2) )) approx "sign" lr(( product_i x_i )) dot min_i |x_i| $
+  
+  This approximation holds because $tanh(x\/2) approx "sign"(x)$ for large $|x|$, and the product of tanh values is dominated by the smallest magnitude input. The scaling factor $alpha = 0.625$ in min-sum compensates for the systematic overestimation of confidence that results from this approximation @chen2005reduced.
+]
+
+#figure(
+  table(
+    columns: 3,
+    align: (left, center, left),
+    stroke: 0.5pt,
+    [*Algorithm*], [*Formula*], [*Trade-off*],
+    [Sum-Product], [$2 tanh^(-1)(product tanh(x\/2))$], [Exact but slower (tanh/atanh)],
+    [Min-Sum], [$alpha dot "sign"(product x) dot min|x|$], [Approximate but faster],
+  ),
+  caption: [Comparison of check-to-qubit message algorithms]
+)
 
 #v(0.5em)
 
@@ -553,7 +651,25 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
 
 *Intuition:* Why exclude $u_i$? To avoid *echo effects*. If $v_j$ included the message it previously received from $u_i$, that information would bounce back, creating a feedback loop. On a *tree-structured graph*, this exclusion ensures each piece of evidence is counted exactly once, making BP exact. On graphs with cycles, this is an approximation.
 
-#pagebreak()
+*Code:* The implementation efficiently computes this by computing the total sum and subtracting each edge's contribution:
+
+```python
+def _qubit_to_check(self, msg_c2q, channel_llr):
+    for q in range(num_qubits):
+        edges = self.qubit_to_edges[q]
+        incoming = msg_c2q[:, edges]  # (batch, degree)
+
+        # Sum of all incoming messages plus channel prior
+        total_sum = incoming.sum(dim=1, keepdim=True) + channel_llr[q]
+
+        # For each edge, subtract its own contribution
+        msg_q2c[:, edges] = total_sum - incoming
+```
+
+#keypoint[
+  *Why subtract?* Instead of computing $n-1$ sums for each of $n$ edges (expensive), we compute one total sum and subtract each term. This reduces complexity from $O(d^2)$ to $O(d)$ per qubit.
+]
+
 
 #step-box(4, "Compute Soft Decisions")[
   For each bit $j$, compute the total belief (sum of all evidence):
@@ -562,6 +678,26 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
 ]
 
 *Why?* Unlike Step 3, here we include *all* incoming messages (no exclusion). This is the final belief about bit $j$, combining the channel prior with evidence from *every* connected parity check. The result is the log-posterior probability ratio.
+
+*Code:* The implementation sums all incoming messages (no exclusion) and converts to probability:
+
+```python
+def _compute_marginals(self, msg_c2q, channel_llr):
+    for q in range(num_qubits):
+        edges = self.qubit_to_edges[q]
+
+        # Total LLR = channel + sum of ALL incoming
+        total_llr = channel_llr[q] + msg_c2q[:, edges].sum(dim=1)
+
+        # Convert LLR to probability: P(1) = sigmoid(-LLR)
+        marginals[:, q] = torch.sigmoid(-total_llr)
+```
+
+#keypoint[
+  *Sigmoid conversion:* The relationship between LLR and probability is:
+  $ "LLR" = log P(0)/P(1) arrow.r.double P(1) = 1/(1 + e^("LLR")) = sigma(-"LLR") $
+  PyTorch's `torch.sigmoid(-total_llr)` computes this efficiently.
+]
 
 #v(0.5em)
 
@@ -624,7 +760,346 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
   }),
   caption: [Information propagates further with each iteration until convergence]
 )
-== BP Algorithm: Pseudocode
+
+=== Damping for Convergence
+
+*Theory:* Damping prevents oscillation by mixing old and new messages:
+$ m^((t+1)) = gamma dot m^((t)) + (1 - gamma) dot m_"new" $
+
+where $gamma in [0, 1)$ is the damping factor.
+
+*Code:* Applied after computing new check-to-qubit messages:
+
+```python
+# Main iteration loop
+for _ in range(max_iter):
+    # Compute new check-to-qubit messages
+    msg_c2q_new = self._check_to_qubit_minsum(msg_q2c, syndromes)
+
+    # Damping: blend old and new messages
+    msg_c2q = damping * msg_c2q + (1 - damping) * msg_c2q_new
+
+    # Update qubit-to-check messages
+    msg_q2c = self._qubit_to_check(msg_c2q, channel_llr)
+```
+
+#figure(
+  table(
+    columns: 3,
+    align: (center, left, left),
+    stroke: 0.5pt,
+    [*Damping Value*], [*Behavior*], [*Use Case*],
+    [$gamma = 0$], [No damping (full update)], [Simple graphs, fast convergence],
+    [$gamma = 0.2$], [Light damping], [Typical default],
+    [$gamma = 0.5$], [Strong damping], [Graphs with short cycles],
+  ),
+  caption: [Effect of damping factor on BP convergence]
+)
+
+=== Summary: Complete BP Iteration
+
+Putting it all together, one BP iteration consists of:
+
+#figure(
+  canvas(length: 1cm, {
+    import draw: *
+
+    // Step boxes
+    rect((-5, 1.5), (-2.5, 2.5), radius: 0.1, fill: rgb("#e8f4e8"), name: "s1")
+    content("s1", text(size: 9pt)[Check→Qubit])
+
+    rect((-1.5, 1.5), (1, 2.5), radius: 0.1, fill: rgb("#fff4e8"), name: "s2")
+    content("s2", text(size: 9pt)[Damping])
+
+    rect((2, 1.5), (4.5, 2.5), radius: 0.1, fill: rgb("#e8e8f4"), name: "s3")
+    content("s3", text(size: 9pt)[Qubit→Check])
+
+    // Arrows
+    line((-2.4, 2), (-1.6, 2), mark: (end: ">"))
+    line((1.1, 2), (1.9, 2), mark: (end: ">"))
+
+    // Formula annotations
+    content((-3.75, 0.8), text(size: 8pt)[$m_(u arrow.r v) = "minsum/sumproduct"$])
+    content((-0.25, 0.8), text(size: 8pt)[$m' = gamma m + (1-gamma) m_"new"$])
+    content((3.25, 0.8), text(size: 8pt)[$m_(v arrow.r u) = p_l + sum m - m_"in"$])
+  }),
+  caption: [One BP iteration: message updates with damping]
+)
+
+#pagebreak()
+
+== BP Dynamics: Classical vs. Quantum Constraints
+
+To understand why BP fails on quantum codes, we compare its behavior on a minimal classical graph (2 bits) versus a minimal quantum stabilizer (4 bits).
+
+=== Problem Setup: 2-Bit vs. 4-Bit Parity
+
+Consider two scenarios with channel error probability $p=0.1$ and observed syndrome $s=1$ (odd parity): (i). A check node $u_1$ connected to 2 variables $v_1, v_2$ (e.g., a simple parity check).
+(ii). A check node $u_1$ connected to 4 variables $v_1, ..., v_4$ (e.g., a surface code plaquette).
+
+#figure(
+  grid(
+    columns: 2,
+    gutter: 1cm,
+    canvas(length: 1cm, {
+      import draw: *
+      // 2-bit graph
+      circle((-1, 1.5), radius: 0.3, fill: rgb("#e0ffe0"), name: "v1")
+      content("v1", $v_1$)
+      circle((1, 1.5), radius: 0.3, fill: rgb("#e0ffe0"), name: "v2")
+      content("v2", $v_2$)
+      rect((-0.3, -0.3), (0.3, 0.3), fill: rgb("#ffe0e0"), name: "u1")
+      content("u1", $u_1$)
+      line("v1", "u1", stroke: blue)
+      line("v2", "u1", stroke: blue)
+      content((0, -1.1), text(size: 9pt)[*Case A: 2-Bit Check*])
+    }),
+    canvas(length: 1cm, {
+      import draw: *
+      // 4-bit graph
+      circle((-1, 1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v1")
+      content("v1", $v_1$)
+      circle((1, 1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v2")
+      content("v2", $v_2$)
+      circle((1, -1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v3")
+      content("v3", $v_3$)
+      circle((-1, -1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v4")
+      content("v4", $v_4$)
+      rect((-0.3, -0.3), (0.3, 0.3), fill: rgb("#ffe0e0"), name: "u1")
+      content("u1", $u_1$)
+      line("v1", "u1", stroke: blue)
+      line("v2", "u1", stroke: blue)
+      line("v3", "u1", stroke: blue)
+      line("v4", "u1", stroke: blue)
+      content((0, -1.6), text(size: 9pt)[*Case B: 4-Bit Plaquette*])
+    })
+  ),
+  caption: [Comparison of message passing geometry]
+)
+
+Both cases start with the same channel LLR:
+$ "LLR"_"channel" = ln((1-p)/p) = ln(9) approx 2.197. $
+The check node sends a message to $v_1$ based on evidence from *all other* neighbors.
+Formula: $m_(u arrow.r v) = (-1)^s dot 2 tanh^(-1)( product_(v' in N(u) without v) tanh(m_(v' arrow.r u) \/ 2) )$
+
+*Case A (2-Bit): Strong Correction*
+$v_1$ has only 1 neighbor ($v_2$). The product contains a single term $tanh(1.1) approx 0.8$.
+$ m_(u_1 arrow.r v_1) = -2 tanh^(-1)(0.8) approx -2.197 $
+The check says: "My other neighbor is definitely correct, so *you* must be wrong." The message magnitude *matches* the channel prior but flips the sign.
+
+*Case B (4-Bit): Signal Dilution*
+$v_1$ has 3 neighbors ($v_2, v_3, v_4$). The product accumulates uncertainty: $0.8^3 approx 0.512$.
+$ m_(u_1 arrow.r v_1) = -2 tanh^(-1)(0.512) approx -1.13 $
+The check says: "I see an error, but it could be any of you 4. I suspect you, but weakly." The penalty (-1.13) is *weaker* than the channel prior (+2.197).
+
+=== Step 3: Variable Update and Failure
+
+We now compute the updated belief for $v_1$:
+
+#table(
+  columns: 3,
+  align: center,
+  stroke: none,
+  table.header([*Metric*], [*Case A (2-Bit)*], [*Case B (4-Bit)*]),
+  table.hline(),
+  [Prior LLR], [$+2.197$], [$+2.197$],
+  [Check Msg], [$-2.197$], [$-1.13$],
+  [*Net LLR*], [$bold(0)$], [$bold(+1.067)$],
+  [Prob($e_1=1$)], [$50%$], [$approx 26%$],
+  [Hard Decision], [$e_1=0$ or $1$], [$e_1=0$],
+)
+
+*Why Quantum BP Fails:*
+1.  *Case A (Classical):* The LLR drops to 0. BP correctly identifies "maximum uncertainty." It knows it cannot distinguish between $e_1$ and $e_2$.
+2.  *Case B (Quantum):* The LLR remains positive ($+1.067$). BP remains "confident" that the bit is correct.
+    - The hard decision outputs $bold(e) = (0,0,0,0)$.
+    - *Parity Check:* $0+0+0+0 = 0 != 1$.
+    - *Result:* BP fails to find a valid solution because the "blame" is diluted across too many qubits.
+
+In a full surface code, this effect compounds. Multiple conflicting checks reduce the LLR toward 0, leading to a state of "Split Belief" where the decoder is paralyzed by symmetry.
+
+#keypoint[
+  *Summary of the Failure Mode:*
+  - *Ambiguity Dilution:* In high-weight stabilizers (like 4-bit plaquettes), the check node message is too weak to overturn the channel prior.
+  - *Invalid Hard Decisions:* Unlike the 2-bit case where uncertainty is explicit ($L=0$), the 4-bit case results in false confidence ($L>0$) that violates the parity constraint.
+]
+
+=== The Degeneracy Problem
+
+#box(
+  width: 100%,
+  stroke: 2pt + red,
+  inset: 12pt,
+  radius: 4pt,
+  fill: rgb("#fff5f5"),
+  [
+    #text(weight: "bold", fill: red)[The Degeneracy Problem]
+    In quantum codes, *multiple distinct error patterns* can be physically equivalent (differing only by a stabilizer).
+    BP, which is designed to find a *unique* correct error, fails to distinguish between these equivalent patterns, leading to decoding failure.
+  ]
+)
+
+#definition[
+  Two errors $bold(e)_1$ and $bold(e)_2$ are *degenerate* if they produce the same syndrome $bold(s)$ and their difference forms a stabilizer:
+  $ H dot bold(e)_1 = H dot bold(e)_2 = bold(s) quad "and" quad bold(e)_1 + bold(e)_2 in "Stabilizers" $
+  
+  Unlike classical codes where distinct low-weight errors are rare, quantum stabilizer codes are *constructed* from local degeneracies (the stabilizers themselves).
+]
+
+Fro example, consider the Toric code where qubits reside on the edges of a lattice. A stabilizer $B_p$ acts on the 4 qubits surrounding a plaquette.
+The weight-2 error occurs on the *left* edges is degenerate with the weight-2 error on the *right* two edges.
+
+#figure(
+  canvas(length: 1cm, {
+    import draw: *
+
+    // Define vertices of the plaquette
+    let p1 = (-2, 2)
+    let p2 = (2, 2)
+    let p3 = (2, -2)
+    let p4 = (-2, -2)
+
+    // Draw the stabilizer plaquette background
+    rect((-2, -2), (2, 2), fill: rgb("#f9f9f9"), stroke: (dash: "dashed"))
+    content((0, 0), text(size: 10pt, fill: gray)[Stabilizer $B_p$])
+
+    // Vertices (Checks)
+    circle(p1, radius: 0.2, fill: black)
+    circle(p2, radius: 0.2, fill: black)
+    circle(p3, radius: 0.2, fill: black)
+    circle(p4, radius: 0.2, fill: black)
+
+    // Syndrome: Highlight the top-left and bottom-left vertices
+    // Let's assume the string is open, creating defects at corners.
+    // For a weight-2 error on a loop, the syndrome is technically 0 if it's a stabilizer.
+    // Let's model a logical error scenario or an open string:
+    // Case: Error on Left (e1) vs Error on Right (e2)
+    // Both connect the top and bottom rows.
+    
+    // Path 1 (Left) - Red
+    line(p1, p4, stroke: (paint: red, thickness: 3pt), name: "e1")
+    content((-2.5, 0), text(fill: red, weight: "bold")[$e_L$])
+    
+    // Path 2 (Right) - Blue
+    line(p2, p3, stroke: (paint: blue, thickness: 3pt), name: "e2")
+    content((2.5, 0), text(fill: blue, weight: "bold")[$e_R$])
+
+    // Labels explaining the symmetry
+    content((0, -2.8), text(size: 9pt)[$e_L$ and $e_R$ are equivalent (differ by $B_p$)])
+    content((0, -3.3), text(size: 9pt)[Both have weight 2. Both satisfy local checks.])
+  }),
+  caption: [Symmetric degeneracy in a Toric code plaquette]
+)
+
+When BP runs on this symmetric structure, it encounters a fatal ambiguity.
+
+1.  *Perfect Symmetry:* The graph structure for $e_L$ is identical to the graph structure for $e_R$.
+2.  *Message Stalling:* BP receives equal evidence for the left-side error and the right-side error.
+3.  *Marginal Probability 0.5:* The algorithm converges to a state where every qubit in the loop has $P(e_i) approx 0.5$.
+
+#definition[
+  *The Hard Decision Failure:*
+  When $P(e_i) approx 0.5$, the log-likelihood ratio is $approx 0$.
+  
+  - If we threshold *below* 0.5: The decoder outputs $bold(e) = bold(0)$ (no error). This fails to satisfy the syndrome.
+  - If we threshold *above* 0.5: The decoder outputs $bold(e) = e_L + e_R$. This is the stabilizer itself (a closed loop), which effectively applies a logical identity but fails to correct the actual open string error.
+]
+
+This is why BP alone typically exhibits *zero threshold* on the Toric code: as the code size increases, the number of these symmetric loops increases, and BP gets confused by all of them simultaneously.
+
+#figure(
+  canvas(length: 1cm, {
+    import draw: *
+
+    // Two solutions
+    circle((-2, 0), radius: 0.6, fill: rgb("#ffe0e0"), name: "e1")
+    content("e1", $bold(e)_1$)
+
+    circle((2, 0), radius: 0.6, fill: rgb("#e0e0ff"), name: "e2")
+    content("e2", $bold(e)_2$)
+
+    // Same syndrome
+    rect((-0.5, -2.5), (0.5, -1.7), name: "syn")
+    content("syn", $bold(s)$)
+
+    // Arrows
+    line((-1.5, -0.5), (-0.3, -1.6), mark: (end: ">"))
+    line((1.5, -0.5), (0.3, -1.6), mark: (end: ">"))
+
+    // Labels
+    content((0, 0.3), text(size: 9pt)[Equal weight])
+    content((0, -3.2), text(size: 9pt)[Same syndrome!])
+  }),
+  caption: [Two errors with the same syndrome cause BP to fail]
+)
+
+When BP encounters degenerate errors of equal weight:
+
+#enum(
+  [BP assigns high probability to *both* solutions $bold(e)_1$ and $bold(e)_2$],
+  [The beliefs "split" between the two solutions],
+  [BP outputs $bold(e)^"BP" approx bold(e)_1 + bold(e)_2$],
+  [Check: $H dot bold(e)^"BP" = H dot (bold(e)_1 + bold(e)_2) = bold(s) + bold(s) = bold(0) eq.not bold(s)$],
+  [*BP fails to converge!*]
+)
+
+#keypoint[
+  For the Toric code, degeneracy is so prevalent that *BP alone shows no threshold* — increasing code distance makes performance worse, not better!
+]
+
+= Ordered Statistics Decoding (OSD)
+
+== The Key Insight
+
+The parity check matrix $H$ (size $m times n$ with $n > m$) has more columns than rows and cannot be directly inverted. However, we can select a subset of $r = "rank"(H)$ linearly independent columns to form an invertible $m times r$ submatrix.
+#definition[
+  For an $m times n$ matrix $H$ with $"rank"(H) = r$:
+  - *Basis set* $[S]$: indices of $r$ linearly independent columns
+  - *Remainder set* $[T]$: indices of the remaining $k' = n - r$ columns
+  - $H_([S])$: the $m times r$ submatrix of columns in $[S]$ (this is invertible!)
+  - $H_([T])$: the $m times k'$ submatrix of columns in $[T]$
+]
+
+#figure(
+  canvas(length: 1cm, {
+    import draw: *
+
+    // Original matrix
+    rect((-4, -1), (-1, 1), fill: rgb("#f0f0f0"), name: "H")
+    content("H", $H$)
+    content((-2.5, -1.5), text(size: 9pt)[$m times n$])
+
+    // Arrow
+    line((-0.5, 0), (0.5, 0), mark: (end: ">"))
+    content((0, 0.5), text(size: 8pt)[split])
+
+    // Basis submatrix
+    rect((1, -1), (3, 1), fill: rgb("#e0ffe0"), name: "HS")
+    content("HS", $H_([S])$)
+    content((1.75, -1.5), text(size: 9pt)[$m times r$])
+    content((1.75, -2), text(size: 8pt)[invertible!])
+
+    // Remainder submatrix
+    rect((3.5, -1), (5, 1), fill: rgb("#ffe0e0"), name: "HT")
+    content("HT", $H_([T])$)
+    content((4, -1.5), text(size: 9pt)[$m times k'$])
+  }),
+  caption: [Splitting $H$ into basis and remainder parts]
+)
+  OSD then resolves split beliefs and *forcing a unique solution*. 
+  It first choose the basis selection $[S]$ through
+  BP soft decisions guide. and then calculate the matrix inversion on $H_([S])$ eliminates ambiguity.
+
+== OSD-0: The Basic Algorithm
+
+Ordered Statistics Decoding (OSD) was introduced by Fossorier and Lin as a soft-decision decoding algorithm for linear block codes that approaches maximum-likelihood performance @fossorier1995soft. The algorithm was later extended with computationally efficient variants @fossorier1996efficient. For quantum LDPC codes, the BP+OSD combination was shown to be remarkably effective by Panteleev and Kalachev, and further developed by Roffe et al. @roffe2020decoding.
+
+#definition[
+  *OSD-0* finds a solution by:
+  1. Choosing a "good" basis $[S]$ using BP soft decisions $P_1$
+  2. Solving for the basis bits via matrix inversion
+  3. Setting all remainder bits to zero
+]
 
 #figure(
   align(left)[
@@ -635,193 +1110,623 @@ Since $p < 0.5$ in practice, we have $p_l > 0$.
       radius: 4pt,
       fill: luma(250),
       [
-        #text(weight: "bold", size: 10pt)[Algorithm 1: Belief Propagation (Min-Sum Variant)]
+        #text(weight: "bold")[Algorithm 2: OSD-0]
         #v(0.5em)
-        #text(size: 9pt)[
-          ```
-          Input: Parity check matrix H, syndrome s, error probability p
-          Output: (converged, error_estimate, soft_decisions)
 
-          function BP(H, s, p, max_iter=n):
-              p_l = log((1-p)/p)                    // Channel LLR
+        *Input:*
+        - Parity matrix $H$ (size $m times n$, rank $r$)
+        - Syndrome $bold(s)$
+        - BP soft decisions $P_1(e_1), ..., P_1(e_n)$ (from Algorithm 1)
 
-              // Step 1: Initialize all messages
-              for each edge (v_j, u_i) where H[i,j] = 1:
-                  m[v_j → u_i] = p_l
+        *Steps:*
 
-              for t = 1 to max_iter:
-                  α = 1 - 2^(-t)                    // Damping factor
+        #enum(
+          [*Rank bits by probability:*
+           Sort bit indices by $P_1$ values: most-likely-flipped first.
+           Result: ordered list $[O_"BP"] = (j_1, j_2, ..., j_n)$],
 
-                  // Step 2: Parity-to-Data messages
-                  for each parity node u_i:
-                      for each neighbor v_j of u_i:
-                          others = V(u_i) \ {v_j}   // All neighbors except v_j
-                          sign_prod = (-1)^(s[i]) × ∏_{v' in others} sign(m[v'→u_i])
-                          min_mag = min_{v' in others} |m[v'→u_i]|
-                          m[u_i → v_j] = α × sign_prod × min_mag
+          [*Reorder columns:*
+           $H_([O_"BP"])$ = matrix $H$ with columns reordered by $[O_"BP"]$],
 
-                  // Step 3: Data-to-Parity messages
-                  for each data node v_j:
-                      for each neighbor u_i of v_j:
-                          others = U(v_j) \ {u_i}   // All neighbors except u_i
-                          m[v_j → u_i] = p_l + Σ_{u' in others} m[u'→v_j]
+          [*Select basis:*
+           Scan left-to-right, select first $r$ linearly independent columns.
+           Basis indices: $[S]$. Remainder indices: $[T]$ (size $k' = n - r$)],
 
-                  // Steps 4-5: Compute decisions
-                  for j = 1 to n:
-                      P_1[j] = p_l + Σ_{u_i in U(v_j)} m[u_i→v_j]
-                      e_BP[j] = 1 if P_1[j] < 0 else 0
+          [*Solve on basis:*
+           $bold(e)_([S]) = H_([S])^(-1) dot bold(s)$],
 
-                  // Step 6: Check convergence
-                  if H × e_BP == s:
-                      return (True, e_BP, P_1)
+          [*Set remainder to zero:*
+           $bold(e)_([T]) = bold(0)$ (zero vector of length $k'$)],
 
-              return (False, e_BP, P_1)
-          ```
-        ]
+          [*Remap to original ordering:*
+           Combine $(bold(e)_([S]), bold(e)_([T]))$ and undo the permutation]
+        )
+
+        *Output:* $bold(e)^"OSD-0"$ satisfying $H dot bold(e)^"OSD-0" = bold(s)$
       ]
     )
   ],
-  caption: [Belief Propagation pseudocode]
+  caption: [OSD-0 algorithm]
+)
+
+The GPU-accelerated implementation in `batch_osd.py` realizes OSD-0 through Gaussian elimination rather than explicit matrix inversion. Below is the mapping between the theoretical definition and the code logic.
+
+=== Step 1: Choosing a "Good" Basis (Sorting)
+
+The definition requires selecting basis columns $[S]$ based on BP soft decisions. For quantum error correction, the implementation sorts by *probability descending* rather than reliability $|p - 0.5|$.
+
+```python
+# Sort by probability descending (highest probability first)
+# High-probability errors become pivots; low-probability errors become free variables
+sorted_indices = np.argsort(probs)[::-1]
+```
+
+#keypoint[
+  *Why probability-based sorting for quantum codes?*
+
+  Traditional OSD uses reliability $|p - 0.5|$, but this fails for quantum codes where:
+  - Most qubits have $p approx 0$ (no error) $arrow.r$ reliability $approx 0.5$
+  - Identified errors have $p approx 1$ $arrow.r$ reliability $approx 0.5$
+
+  Both have similar reliability despite being very different! Sorting by probability directly places likely errors in $[S]$ (pivots) and unlikely errors in $[T]$ (free variables set to 0).
+]
+
+=== Step 2: Solving for Basis Bits (RREF)
+
+Instead of computing $H_([S])^(-1)$ explicitly, the code computes the *Reduced Row Echelon Form* (RREF) of the augmented matrix $[H_"sorted" | bold(s)]$. This is numerically stable and solves the linear system in one pass. For example, consider a parity check matrix $H$ with 3 checks and 6 variables, and syndrome $bold(s) = (1, 0, 1)^T$. Assume BP has already sorted columns by probability (column 0 = highest probability error). Then the initial augmented matrix $[H_"sorted" | bold(s)]$ writes:
+
+$ mat(
+  1, 0, 1, 1, 0, 1, |, 1;
+  1, 1, 0, 0, 1, 1, |, 0;
+  0, 1, 1, 0, 1, 0, |, 1;
+) $
+
+*Iteration 1: Process column 0*
+- Find pivot: Row 0 has a 1 in column 0 $checkmark$
+- Eliminate: Row 1 also has 1 in column 0, so XOR row 1 with row 0
+
+$ mat(
+  bold(1), 0, 1, 1, 0, 1, |, 1;
+  0, 1, 1, 1, 1, 0, |, 1;
+  0, 1, 1, 0, 1, 0, |, 1;
+) quad "pivot_cols" = [0] $
+
+*Iteration 2: Process column 1*
+- Find pivot: Row 1 has a 1 in column 1 $checkmark$
+- Eliminate: Row 2 also has 1 in column 1, so XOR row 2 with row 1
+
+$ mat(
+  bold(1), 0, 1, 1, 0, 1, |, 1;
+  0, bold(1), 1, 1, 1, 0, |, 1;
+  0, 0, 0, 1, 0, 0, |, 0;
+) quad "pivot_cols" = [0, 1] $
+
+*Iteration 3: Process column 2*
+- Find pivot: No rows have a 1 in column 2 below the current pivot row $times$
+- Skip this column (it becomes a free variable)
+
+*Iteration 4: Process column 3*
+- Find pivot: Row 2 has a 1 in column 3 $checkmark$
+- Eliminate: Rows 0 and 1 have 1s in column 3, XOR both with row 2
+
+$ mat(
+  bold(1), 0, 1, 0, 0, 1, |, 1;
+  0, bold(1), 1, 0, 1, 0, |, 1;
+  0, 0, 0, bold(1), 0, 0, |, 0;
+) quad "pivot_cols" = [0, 1, 3] $
+
+*Final Result:* Pivot columns $[S] = {0, 1, 3}$ (basis variables) and free columns $[T] = {2, 4, 5}$ (remainder variables).
+
+In the code, the H matrix is stored as a 2D 'int8' array to fully utilized the GPU's integer arithmetic capabilities.
+The fuctiion 'compute_rref' implements Gaussian elimination over $"GF"(2)$:
+
+```python
+def _get_rref_cached(self, sorted_indices: np.ndarray, syndrome: np.ndarray):
+    # Reorder columns by sorted indices
+    H_sorted = self.H[:, sorted_indices]
+    # Build augmented matrix [H_sorted | s]
+    augmented = np.hstack([H_sorted, syndrome.reshape(-1, 1)]).astype(np.int8)
+    # Compute RREF in-place
+    pivot_cols = self._compute_rref(augmented)
+    return augmented, pivot_cols
+
+def _compute_rref(self, M: np.ndarray) -> List[int]:
+    m, n = M.shape
+    pivot_row = 0
+    pivot_cols = []
+
+    for col in range(n - 1):  # Don't pivot on syndrome column
+        if pivot_row >= m:
+            break
+        # Find a row with 1 in this column
+        candidates = np.where(M[pivot_row:, col] == 1)[0]
+        if len(candidates) == 0:
+            continue  # No pivot in this column
+
+        # Swap to bring pivot to current row
+        swap_r = candidates[0] + pivot_row
+        if swap_r != pivot_row:
+            M[[pivot_row, swap_r]] = M[[swap_r, pivot_row]]
+
+        pivot_cols.append(col)
+
+        # Eliminate all other 1s in this column (XOR in GF(2))
+        rows_to_xor = np.where(M[:, col] == 1)[0]
+        rows_to_xor = rows_to_xor[rows_to_xor != pivot_row]
+        if len(rows_to_xor) > 0:
+            M[rows_to_xor, :] ^= M[pivot_row, :]
+
+        pivot_row += 1
+
+    return pivot_cols
+```
+
+- `pivot_cols`: The column indices where pivots were found. These form the basis set $[S]$.
+- After RREF, the basis submatrix has an identity-like structure, and the syndrome column contains the solution values.
+
+// #keypoint[
+//   The RREF algorithm transforms both $H$ and $bold(s)$ simultaneously using the same row operations. After RREF, each row $r$ with pivot column $c$ gives us directly: $e_c = "augmented"[r, -1]$ (the transformed syndrome value in that row).
+// ]
+
+=== Step 3: Reading the OSD-0 solution:
+Continue from the previous example, the result can be read from the pivot collumns and syndrome column $bold(s)$, as illustated by the following steps:
+- Set free variables to zero: $e_2 = e_4 = e_5 = 0$
+- Read pivot values from the transformed syndrome column:
+  - Row 0: pivot at column 0, syndrome value = 1 $arrow.r e_0 = 1$
+  - Row 1: pivot at column 1, syndrome value = 1 $arrow.r e_1 = 1$
+  - Row 2: pivot at column 3, syndrome value = 0 $arrow.r e_3 = 0$
+- Solution in sorted order then must be $bold(e)_"sorted" = (1, 1, 0, 0, 0, 0)$, and can be verified through:
+
+$ H_"sorted" dot bold(e)_"sorted" = mat(
+  1, 0, 1, 1, 0, 1;
+  1, 1, 0, 0, 1, 1;
+  0, 1, 1, 0, 1, 0;
+) dot mat(1; 1; bold(0); 0 ; bold(0); bold(0)) = mat(
+  1 plus.o 0;
+  1 plus.o 1;
+  0 plus.o 1
+) = mat(1; 0; 1) = bold(s) quad checkmark $
+
+
+In the code, the solution is extracted by initializing the solution vector to zeros and updating *only* the pivot positions using the transformed syndrome.
+
+
+```python
+# OSD-0 Solution: Initialize all bits to 0 (remainder bits stay 0)
+solution_base = np.zeros(self.num_errors, dtype=np.int8)
+
+# Build pivot-to-row mapping and extract solution
+pivot_row_map = {}
+for r in range(augmented.shape[0]):
+    row_pivots = np.where(augmented[r, :self.num_errors] == 1)[0]
+    if len(row_pivots) > 0:
+        col = row_pivots[0]
+        if col in pivot_cols:
+            pivot_row_map[col] = r
+            # Pivot bit = transformed syndrome value
+            solution_base[col] = augmented[r, -1]
+```
+
+- `solution_base = np.zeros(...)`: Ensures $bold(e)_([T]) = bold(0)$ (OSD-0 constraint).
+- `augmented[r, -1]`: The transformed syndrome value. Since the basis submatrix is now identity-like, this directly gives $bold(e)_([S])$.
+
+=== Step 4: Inverse Mapping (Unsort)
+
+Finally, the solution is mapped back to the original column ordering:
+
+```python
+# Remap from sorted order back to original order
+estimated_errors = np.zeros(self.num_errors, dtype=int)
+estimated_errors[sorted_indices] = final_solution_sorted
+return estimated_errors
+```
+
+#figure(
+table(
+columns: 2,
+align: (left, left),
+stroke: 0.5pt,
+[*Theoretical Step*], [*Code Realization (`batch_osd.py`)*],
+[1. Sort by soft decisions], [`np.argsort(probs)[::-1]` (probability descending)],
+[2. Select basis $[S]$], [`pivot_cols` from `_compute_rref`],
+[3. Matrix inversion], [RREF transforms basis to identity structure],
+[4. Solve $bold(e)_([S])$], [`solution_base[col] = augmented[r, -1]`],
+[5. Set $bold(e)_([T]) = bold(0)$], [`np.zeros(...)` initialization],
+[6. Unsort], [`estimated_errors[sorted_indices] = solution`],
+),
+caption: [Mapping OSD-0 theory to `batch_osd.py` implementation]
+)
+
+
+== Higher-Order OSD (OSD-$lambda$)
+
+OSD-0 assumes the remainder error bits are zero ($bold(e)_([T]) = bold(0)$). While this provides a valid solution, it forces all "correction" work onto the basis bits $[S]$, which may result in a high-weight (improbable) error pattern.
+
+#definition[
+  *Higher-order OSD* improves this by testing non-zero configurations for the remainder bits $bold(e)_([T])$.
+  For any chosen hypothesis $bold(e)_([T])$, the corresponding basis bits $bold(e)_([S])$ are uniquely determined to satisfy the syndrome:
+  $ bold(e)_([S]) = H_([S])^(-1) dot (bold(s) + H_([T]) dot bold(e)_([T])) $
+]
+
+It is straightforward to show that the constructed error $bold(e) = (bold(e)_([S]), bold(e)_([T]))$ always satisfies the parity check equation $H dot bold(e) = bold(s)$ and the OSD-0 is a special case of OSD-$lambda$ when $lambda = 0$.
+
+$ H dot bold(e) &= mat(H_([S]), H_([T])) dot mat(bold(e)_([S]); bold(e)_([T])) = H_([S]) dot bold(e)_([S]) + H_([T]) dot bold(e)_([T]) \
+  &= H_([S]) dot [H_([S])^(-1) dot (bold(s) + H_([T]) dot bold(e)_([T]))] + H_([T]) dot bold(e)_([T]) \
+  &= I dot (bold(s) + H_([T]) dot bold(e)_([T])) + H_([T]) dot bold(e)_([T]) \
+  &= bold(s) + H_([T]) dot bold(e)_([T]) + H_([T]) dot bold(e)_([T]) = bold(s) + bold(0) = bold(s) $
+
+Then the problem change to find the minimum soft-weight solution for the remainder bits $bold(e)_([T])$.
+A naive way to do this is to implement an exhaustive search (OSD-E) testing on all $2^(k')$ patterns. This guarantees finding the minimum weight solution.
+Unfortunately, the remainder set $[T]$ has size $k' = n - r$, which is exponentially large in the code parameters $n - r$.
+ To make this feasible, we restrict the search to the search depth $lambda$, i.e., the *most suspicious* $lambda$ bits in $[T]$ (those with highest error probability among free variables) and accelerate this serch process by using the GPU.
+The `batch_osd.py` implementation accelerates OSD-E by evaluating all $2^lambda$ candidates in parallel on GPU. Here is how it works:
+
+*Step 1: Identify Search Columns*
+
+Select the $lambda$ free variables with highest error probability (most suspicious):
+
+```python
+# Get free columns (not pivots)
+all_cols = set(range(self.num_errors))
+free_cols = sorted(list(all_cols - set(pivot_cols)))
+
+# Sort free columns by probability (highest first = most suspicious)
+free_cols_with_prob = [(col, probs[sorted_indices[col]]) for col in free_cols]
+free_cols_with_prob.sort(key=lambda x: -x[1])
+
+# Select top osd_order free variables for search
+search_cols = [col for col, _ in free_cols_with_prob[:osd_order]]
+```
+
+*Step 2: Generate All $2^lambda$ Candidates*
+
+```python
+# Exhaustive: Generate all 2^k combinations using bit manipulation
+num_candidates = 1 << len(search_cols)  # 2^k
+candidates_np = np.array([
+    [(i >> j) & 1 for j in range(len(search_cols))]
+    for i in range(num_candidates)
+], dtype=np.int8)
+```
+
+*Step 3: Parallel Evaluation on GPU*
+
+All candidates are evaluated simultaneously using batched matrix operations:
+
+```python
+def _evaluate_candidates_gpu(self, candidates, augmented, search_cols, probs_sorted, pivot_cols):
+    num_candidates = candidates.shape[0]
+
+    # Transfer to GPU
+    M_subset = torch.from_numpy(augmented[:, search_cols]).float().to(self.device)
+    syndrome_col = torch.from_numpy(augmented[:, -1]).float().to(self.device)
+
+    # Compute modified syndromes for ALL candidates in parallel
+    # target_syndrome = (s + M @ e_T) % 2
+    target_syndromes = (syndrome_col.unsqueeze(0) + candidates.float() @ M_subset.T) % 2
+
+    # Initialize solution matrix (num_candidates × n)
+    cand_solutions = torch.zeros(num_candidates, self.num_errors, device=self.device)
+
+    # Set free variable values from candidates
+    cand_solutions[:, search_cols] = candidates.float()
+
+    # Solve for pivot variables using the RREF structure
+    for r in range(augmented.shape[0]):
+        row_pivots = torch.where(augmented_torch[r, :] == 1)[0]
+        if len(row_pivots) > 0:
+            pivot_c = row_pivots[0].item()
+            if pivot_c in pivot_cols:
+                # Pivot value = modified syndrome for this row
+                cand_solutions[:, pivot_c] = target_syndromes[:, r]
+
+    # Compute soft-weighted costs and return best solution
+    costs = self._compute_soft_weight_gpu(cand_solutions, probs_sorted)
+    best_idx = torch.argmin(costs)
+    return cand_solutions[best_idx]
+```
+
+*Step 4: Soft-Weight Cost Function*
+
+In our code, the OSD uses the *soft-weighted cost* based on log-probabilities @roffe2020decoding:
+#definition[
+  *Soft-Weighted Cost (Log-Probability Weight).* For an error pattern $bold(e) = (e_1, ..., e_n)$ with bit-wise error probabilities $p_i = P(e_i = 1)$, the soft-weighted cost is:
+
+  $ W_"soft"(bold(e)) = sum_(i : e_i = 1) (-log p_i) = - sum_(i=1)^n e_i dot log p_i $
+
+  Lower cost indicates a more probable error pattern.
+]
+There actually are several other cost functions that can be used for OSD, such as the Hamming weight, Euclidean distance, and LLR-based weight, as listed in the following table:
+#figure(
+  table(
+    columns: 3,
+    align: (left, left, left),
+    stroke: 0.5pt,
+    [*Cost Function*], [*Formula*], [*Properties*],
+    [Hamming Weight @hamming1950error], [$W_H(bold(e)) = sum_i e_i$], [Counts flipped bits; ignores probabilities],
+    [Soft Weight (Log-Prob) @roffe2020decoding], [$W_"soft"(bold(e)) = -sum_i e_i log p_i$], [Weights by $-log p_i$; approximates ML],
+    [Euclidean Distance @forney1966generalized], [$d_E^2 = sum_i (r_i - c_i)^2$], [For AWGN channels with continuous signals],
+    [LLR-Based Weight @hagenauer1996iterative], [$W_"LLR"(bold(e)) = sum_i e_i |L_i|$], [Uses log-likelihood ratios $L_i = log(p_i / (1-p_i))$],
+  ),
+  caption: [Comparison of cost functions for selecting the best error pattern]
+)
+
+Then why soft weight is preferred for BP+OSD? 
+This is because the soft weight approximates the Maximum-Likelihood Decoding (ML) objective @yue2020revisit. The ML decoder selects the error pattern $bold(e)^*$ that maximizes the posterior probability 
+$ bold(e)^* = arg max_bold(e) P(bold(e) | "syndrome"). $
+ Taking the logarithm, which is a monotonic transformation, and suppose the error $e_i$ are independent, each with probability $P(e_i = 1) = p_i$, this becomes:
+   $ bold(e)^* = arg max_bold(e) sum_i [e_i log p_i + (1-e_i) log(1-p_i)] $
+   For sparse errors where most $e_i = 0$, minimizing $W_"soft"(bold(e)) = -sum_i e_i log p_i$ closely approximates the ML objective.
+#keypoint[
+  *Question:* Why not use the Hamming weight or Euclidean distance as the cost function?
+]
+In the code, the soft-weight cost function is implemented as follows:
+```python
+def _compute_soft_weight_gpu(self, solutions, probs):
+    # Clip to avoid log(0)
+    probs_clipped = torch.clamp(probs, 1e-10, 1 - 1e-10)
+    # Log-probability weights: -log(p) penalizes flipping low-probability bits
+    log_weights = -torch.log(probs_clipped)
+    # Total cost = sum of weights for flipped bits
+    costs = (solutions * log_weights).sum(dim=1)
+    return costs
+```
+== Combination Sweep Strategy (OSD-CS)
+
+To allow for a larger search depth (e.g., $lambda approx 50-100$) without exponential cost, we use the *combination sweep* strategy, first proposed for reducing error floors in classical LDPC codes and adapted for quantum codes by Roffe et al. @roffe2020decoding.
+
+#definition[
+  *OSD-CS* assumes the true error pattern on the remainder bits is *sparse*. Instead of checking *all* $2^lambda$ patterns on $lambda$ most suspicious bits, it only checks those with low Hamming weight (w = 0,1,2). Exausted on those strings only take $C_lambda^0 + C_lambda^1 + C_lambda^2 = 1 + lambda + lambda(lambda-1)/2$ candidates.
+With $lambda = 60$: approximately $1 + k + 1770$ configurations (vs $2^k$ for exhaustive search!)
+
+  *Algorithm Steps:*
+  1. *Sort:* Select the $lambda$ most suspicious positions in $[T]$ (highest probability among free variables).
+  2. *Sweep:* Generate candidate vectors $bold(e)_([T])$ with:
+     - *Weight 0:* The zero vector (equivalent to OSD-0).
+     - *Weight 1:* All single-bit flips among the $lambda$ bits.
+     - *Weight 2:* All pairs of bit flips among the $lambda$ bits.
+  3. *Select:* Calculate $bold(e)_([S])$ for each candidate, compute the soft-weighted cost, and pick the best one.
+]
+
+#figure(
+  table(
+    columns: 3,
+    align: (left, center, left),
+    stroke: 0.5pt,
+    [*Method*], [*Complexity*], [*Use Case*],
+    [OSD-0], [$O(1)$], [Fastest, baseline performance],
+    [OSD-E (Exhaustive)], [$O(2^lambda)$], [Optimal for small $lambda$ ($lt.eq 15$)],
+    [OSD-CS (Comb. Sweep)], [$O(lambda^2)$], [Near-optimal for large $lambda$ ($approx 60$)],
+  ),
+  caption: [Comparison of OSD Search Strategies]
+)
+  *Why OSD-CS works for Quantum Codes?*
+  In the low-error regime relevant for QEC, it is statistically very unlikely that the optimal solution requires flipping 3+ bits in the specific subset of "uncertain" remainder bits.
+  Checking only weights 0, 1, and 2 captures the vast majority of likely error configurations while reducing complexity from exponential to polynomial (quadratic) @roffe2020decoding.
+
+#definition[
+  *Combination sweep* is a greedy search testing configurations by likelihood:
+
+  #enum(
+    [*Sort remainder bits:* Order bits in $[T]$ by error probability (most likely first)],
+    [*Test weight-0:* The zero vector (OSD-0 baseline)],
+    [*Test weight-1:* Set each single bit in $bold(e)_([T])$ to 1 (all $k$ possibilities)],
+    [*Test weight-2:* Set each pair among the first $lambda$ bits to 1]
+  )
+
+  Keep the minimum soft-weight solution found.
+]
+
+
+
+=== OSD-CS Implementation in `batch_osd.py`
+
+The GPU-accelerated implementation realizes OSD-CS by explicitly generating sparse error patterns (weights 0, 1, and 2) instead of iterating through all binary combinations.
+
+*Step 1: Generating Sparse Candidates*
+
+The `_generate_osd_cs_candidates` method generates candidate vectors $bold(e)_([T])$ with structured loops:
+
+```python
+def _generate_osd_cs_candidates(self, k: int, osd_order: int) -> np.ndarray:
+    """Generate OSD-CS (Combination Sweep) candidate strings."""
+    candidates = []
+
+    # Weight 0: Zero vector (OSD-0 baseline)
+    candidates.append(np.zeros(k, dtype=np.int8))
+
+    # Weight 1: Single-bit flips (k candidates)
+    for i in range(k):
+        candidate = np.zeros(k, dtype=np.int8)
+        candidate[i] = 1
+        candidates.append(candidate)
+
+    # Weight 2: Two-bit flips (limited to osd_order)
+    for i in range(min(osd_order, k)):
+        for j in range(i + 1, min(osd_order, k)):
+            candidate = np.zeros(k, dtype=np.int8)
+            candidate[i] = 1
+            candidate[j] = 1
+            candidates.append(candidate)
+
+    return np.array(candidates, dtype=np.int8)
+```
+
+- `np.zeros(k)`: The "baseline" hypothesis (OSD-0 solution).
+- `range(k)` loop: Adds $k$ candidates, each with a single bit flip at index `i`.
+- Nested `range(limit)` loop: Adds $binom(lambda, 2)$ candidates, representing pairs of flips at indices $(i, j)$.
+
+
+*Step 2: Integration into the Solve Loop*
+
+The `solve` method switches between OSD-E and OSD-CS based on the `osd_method` parameter:
+
+```python
+# Generate candidates based on method
+if osd_method == 'combination_sweep':
+    # OSD-CS: O(λ²) sparse candidates
+    candidates_np = self._generate_osd_cs_candidates(len(search_cols), osd_order)
+else:
+    # Exhaustive: O(2^k) all combinations
+    num_candidates = 1 << len(search_cols)
+    candidates_np = np.array([[(i >> j) & 1 for j in range(len(search_cols))]
+                             for i in range(num_candidates)], dtype=np.int8)
+
+# Transfer to GPU and evaluate all candidates in parallel
+candidates = torch.from_numpy(candidates_np).to(self.device)
+best_solution_sorted = self._evaluate_candidates_gpu(
+    candidates, augmented, search_cols, probs_sorted, pivot_cols
+)
+```
+
+Both methods use the same GPU evaluation function---only the candidate generation differs.
+
+*Complexity Comparison*
+
+#figure(
+table(
+columns: 3,
+align: (left, center, center),
+stroke: 0.5pt,
+[*Method*], [*Candidates*], [*Example ($lambda = 15$)*],
+[OSD-E], [$2^lambda$], [$32768$],
+[OSD-CS], [$1 + k + binom(lambda, 2)$], [$approx 1 + k + 105$],
+),
+caption: [Number of candidates for OSD-E vs OSD-CS]
+)
+
+#figure(
+table(
+columns: 2,
+align: (left, left),
+stroke: 0.5pt,
+[*Weight Class*], [*Code Realization*],
+[Weight 0], [`candidates.append(np.zeros(k))`],
+[Weight 1], [`for i in range(k): candidate[i] = 1`],
+[Weight 2], [`for i in range(limit): for j in range(i+1, limit): ...`],
+),
+caption: [Mapping OSD-CS theory to `batch_osd.py` implementation]
 )
 
 #pagebreak()
 
-== Minimum Working Example: BP on a Simple Graph
 
-Before diving into rigorous convergence proofs, let's build intuition with the simplest possible example: a 2-bit parity check.
+= The Complete BP+OSD Decoder
 
-=== Problem Setup
-
-Consider a minimal factor graph with:
-- *2 variable nodes* $v_1, v_2$ (representing error bits $e_1, e_2$)
-- *1 check node* $u_1$ (enforcing parity constraint $e_1 plus.o e_2 = s$)
-- *Channel error probability* $p = 0.1$ (each bit flips with 10% probability)
-- *Observed syndrome* $s = 1$ (odd parity detected)
+== Algorithm Flow
 
 #figure(
   canvas(length: 1cm, {
     import draw: *
 
-    // Variable nodes
-    circle((-2, 0), radius: 0.3, fill: rgb("#e0ffe0"), name: "v1")
-    content("v1", $v_1$)
+    // Input box
+    rect((-1.5, 6), (1.5, 7), radius: 0.1, name: "input")
+    content("input", [Input: $H$, $bold(s)$, $p$])
 
-    circle((2, 0), radius: 0.3, fill: rgb("#e0ffe0"), name: "v2")
-    content("v2", $v_2$)
+    // BP box
+    rect((-1.5, 4), (1.5, 5), radius: 0.1, fill: rgb("#e8f4e8"), name: "bp")
+    content("bp", [Run BP])
 
-    // Check node
-    rect((-0.3, -0.3), (0.3, 0.3), fill: rgb("#ffe0e0"), name: "u1")
-    content("u1", $u_1$)
+    // Decision diamond
+    line((0, 3.5), (1.2, 2.5), (0, 1.5), (-1.2, 2.5), close: true)
+    content((0, 2.5), text(size: 8pt)[Converged?])
 
-    // Edges with message labels
-    line((-1.7, 0), (-0.3, 0), stroke: blue)
-    content((-1, 0.3), text(fill: blue, size: 8pt)[$m_(v_1 arrow.r u_1)$])
+    // OSD box
+    rect((3, 1.7), (5.5, 2.8), radius: 0.1, fill: rgb("#fff4e8"), name: "osd")
+    content("osd", [Run OSD])
 
-    line((0.3, 0), (1.7, 0), stroke: blue)
-    content((1, 0.3), text(fill: blue, size: 8pt)[$m_(v_2 arrow.r u_1)$])
+    // Output boxes
+    rect((-1.5, -0.5), (1.5, 0.5), radius: 0.1, fill: rgb("#e8e8f4"), name: "out1")
+    content("out1", [Return $bold(e)^"BP"$])
 
-    line((-1.7, -0.15), (-0.3, -0.15), stroke: red)
-    content((-1, -0.5), text(fill: red, size: 8pt)[$m_(u_1 arrow.r v_1)$])
+    rect((3, -0.5), (5.5, 0.5), radius: 0.1, fill: rgb("#e8e8f4"), name: "out2")
+    content("out2", [Return $bold(e)^"OSD"$])
 
-    line((0.3, -0.15), (1.7, -0.15), stroke: red)
-    content((1, -0.5), text(fill: red, size: 8pt)[$m_(u_1 arrow.r v_2)$])
+    // Arrows
+    line((0, 6), (0, 5.1), mark: (end: ">"))
+    line((0, 4), (0, 3.6), mark: (end: ">"))
+    line((0, 1.5), (0, 0.6), mark: (end: ">"))
+    content((-0.5, 1), text(size: 8pt)[Yes])
 
-    content((0, -1.5), text(size: 9pt)[Constraint: $e_1 plus.o e_2 = 1$])
+    line((1.2, 2.5), (2.9, 2.5), mark: (end: ">"))
+    content((2, 2.9), text(size: 8pt)[No])
+
+    line((4.25, 1.6), (4.25, 0.6), mark: (end: ">"))
   }),
-  caption: [Minimal BP example: 2 bits, 1 parity check]
+  caption: [BP+OSD decoder flowchart]
 )
 
-=== Message Initialization
-
-We represent messages as *log-likelihood ratios* (LLRs):
-$ "LLR"(e_j) = ln((P(e_j = 0))/(P(e_j = 1))) $
-
-*Initial channel messages* (prior beliefs from channel):
-$ "LLR"_"channel" = ln((1-p)/p) = ln(0.9/0.1) = ln(9) approx 2.197 $
-
-This means: "I believe the bit is correct (0) with 9:1 odds."
-
-*Iteration 0* (initialization):
-$ m_(v_1 arrow.r u_1)^((0)) &= "LLR"_"channel" = 2.197 \
-  m_(v_2 arrow.r u_1)^((0)) &= "LLR"_"channel" = 2.197 $
-
-=== Iteration 1: Check Node Update
-
-The check node enforces $e_1 plus.o e_2 = 1$. The check node update rule in LLR domain is:
-$ m_(u_1 arrow.r v_1)^((1)) = (-1)^s dot 2 tanh^(-1)(tanh(m_(v_2 arrow.r u_1)^((0)) \/ 2)) $
-
-For syndrome $s = 1$ (odd parity), the factor $(-1)^s = -1$ *flips the sign*:
-
-$ m_(u_1 arrow.r v_1)^((1)) &= -2 tanh^(-1)(tanh(2.197 \/ 2)) \
-                              &= -2 tanh^(-1)(tanh(1.099)) \
-                              &= -2 tanh^(-1)(0.800) \
-                              &approx -2 dot 1.099 = -2.197 $
-
-Similarly:
-$ m_(u_1 arrow.r v_2)^((1)) = -2.197 $
-
-*Interpretation:* The check node says "Given that your neighbor believes the bit is correct (+2.197), and I detected odd parity, *you* must be the error (-2.197)."
-
-=== Iteration 2: Variable Node Update
-
-Each variable node combines channel evidence with check messages:
-$ m_(v_1 arrow.r u_1)^((1)) &= "LLR"_"channel" + m_(u_1 arrow.r v_1)^((1)) \
-                              &= 2.197 + (-2.197) = 0 $
-
-$ m_(v_2 arrow.r u_1)^((1)) &= 2.197 + (-2.197) = 0 $
-
-*Interpretation:* "The channel says I'm correct (+2.197), but the check says I'm wrong (-2.197). I'm uncertain (0)."
-
-=== Iteration 3: Check Node Update (Again)
-
-$ m_(u_1 arrow.r v_1)^((2)) &= -2 tanh^(-1)(tanh(0 \/ 2)) = -2 tanh^(-1)(0) = 0 \
-  m_(u_1 arrow.r v_2)^((2)) &= 0 $
-
-*Convergence:* Messages have stabilized at 0 (maximum uncertainty). This is expected because:
-- Both bits have *identical* channel evidence
-- The syndrome only tells us *one* bit is wrong, not *which* one
-- BP correctly identifies that both bits are equally likely to be the error
-
-=== Final Beliefs
-
-The *belief* at each variable node combines all incoming messages. For the *final decision*, we compute:
-$ "LLR"_"posterior"(e_1) = "LLR"_"channel" + m_(u_1 arrow.r v_1)^((2)) = 2.197 + 0 = 2.197 $
-
-This gives $P(e_1 = 0) \/ P(e_1 = 1) = e^(2.197) approx 9$, so $P(e_1 = 1) approx 0.1$.
-
-Similarly for $e_2$: $P(e_2 = 1) approx 0.1$.
-
-*Interpretation:* BP converged to the correct marginal probabilities! Given:
-- Channel error rate $p = 0.1$
-- Syndrome $s = 1$ (exactly one error)
-- No way to distinguish which bit is the error
-
-The posterior probability that each bit is the error is indeed $approx 0.1$ (the channel prior), which is the correct Bayesian inference.
-
 #keypoint[
-  *Key Insights from this Example:*
-
-  1. *Message passing converges quickly* (3 iterations for this simple graph)
-
-  2. *Check nodes enforce constraints* by flipping message signs when syndrome is violated
-
-  3. *Variable nodes aggregate evidence* from channel and checks
-
-  4. *BP finds correct marginals* even when the exact error is ambiguous
-
-  5. *Symmetry is preserved*: Both bits have equal posterior probability because they have identical evidence
+  - If BP succeeds (converges): use BP result — fast!
+  - If BP fails: use OSD to resolve degeneracy — always gives valid answer
 ]
 
-=== What if Syndrome was $s = 0$?
+#pagebreak()
 
-If we observed $s = 0$ (even parity, no error detected), then:
-- Check node messages: $m_(u_1 arrow.r v_i) = +2.197$ (confirming channel belief)
-- Final beliefs: $"LLR"_"posterior" = 2.197 + 2.197 = 4.394$
-- Posterior: $P(e_i = 1) approx 0.01$ (very confident both bits are correct)
+== Complete Algorithm: BP+OSD-CS
 
-This shows how BP *amplifies confidence* when channel and syndrome agree, and *resolves uncertainty* when they conflict.
+#figure(
+  align(left)[
+    #box(
+      width: 100%,
+      stroke: 1pt,
+      inset: 12pt,
+      radius: 4pt,
+      fill: luma(250),
+      [
+        #text(weight: "bold", size: 10pt)[Algorithm 3: BP+OSD-CS Decoder]
+        #v(0.5em)
+        #text(size: 8.5pt)[
+          ```
+          Input: Parity matrix H (m×n, rank r), syndrome s, error prob p, depth λ=60
+          Output: Error estimate e satisfying H·e = s
+
+          function BP_OSD_CS(H, s, p, λ):
+              // ===== STAGE 1: Run Belief Propagation (Algorithm 1) =====
+              (converged, e_BP, P_1) = BP(H, s, p)
+              if converged:
+                  return e_BP
+
+              // ===== STAGE 2: OSD-0 (Algorithm 2) =====
+              [O_BP] = argsort(P_1)              // Sort: most likely flipped first
+              H_sorted = H[:, O_BP]              // Reorder columns
+              [S] = first r linearly independent columns of H_sorted
+              [T] = remaining k' = n - r columns
+
+              e_[S] = H_[S]^(-1) × s             // Solve on basis
+              e_[T] = zeros(k')                  // Set remainder to zero
+              best = (e_[S], e_[T])
+              best_wt = hamming_weight(best)
+
+              // ===== STAGE 3: Combination Sweep =====
+              // Weight-1 search: try flipping each remainder bit
+              for i = 0 to k'-1:
+                  e_[T] = zeros(k');  e_[T][i] = 1
+                  e_[S] = H_[S]^(-1) × (s + H_[T] × e_[T])
+                  if hamming_weight((e_[S], e_[T])) < best_wt:
+                      best = (e_[S], e_[T])
+                      best_wt = hamming_weight(best)
+
+              // Weight-2 search: try flipping pairs in first λ bits
+              for i = 0 to min(λ, k')-1:
+                  for j = i+1 to min(λ, k')-1:
+                      e_[T] = zeros(k');  e_[T][i] = 1;  e_[T][j] = 1
+                      e_[S] = H_[S]^(-1) × (s + H_[T] × e_[T])
+                      if hamming_weight((e_[S], e_[T])) < best_wt:
+                          best = (e_[S], e_[T])
+                          best_wt = hamming_weight(best)
+
+              return inverse_permute(best, O_BP)  // Remap to original ordering
+          ```
+        ]
+      ]
+    )
+  ],
+  caption: [Complete BP+OSD-CS algorithm]
+)
 
 #pagebreak()
+
 
 == BP Convergence and Performance Guarantees
 
@@ -1593,346 +2498,6 @@ A well-known example is the *Toric Code*, which is the hypergraph product of the
 - Rate $R = 2/(2n^2) arrow.r 0$ as $n arrow.r infinity$
 
 #pagebreak()
-
-= The Degeneracy Problem
-
-== Why BP Fails on Quantum Codes
-
-#box(
-  width: 100%,
-  stroke: 2pt + red,
-  inset: 12pt,
-  radius: 4pt,
-  fill: rgb("#fff5f5"),
-  [
-    #text(weight: "bold", fill: red)[The Degeneracy Problem]
-    #v(0.5em)
-
-    In quantum codes, *multiple different errors can produce the same syndrome*.
-
-    This is called *degeneracy* and it breaks BP!
-  ]
-)
-
-#definition[
-  Two errors $bold(e)_1$ and $bold(e)_2$ are *degenerate* if:
-  $ H dot bold(e)_1 = H dot bold(e)_2 = bold(s) $
-
-  In quantum codes, degenerate errors are often *equivalent* for error correction purposes.
-]
-
-== The Split-Belief Problem
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Two solutions
-    circle((-2, 0), radius: 0.6, fill: rgb("#ffe0e0"), name: "e1")
-    content("e1", $bold(e)_1$)
-
-    circle((2, 0), radius: 0.6, fill: rgb("#e0e0ff"), name: "e2")
-    content("e2", $bold(e)_2$)
-
-    // Same syndrome
-    rect((-0.5, -2.5), (0.5, -1.7), name: "syn")
-    content("syn", $bold(s)$)
-
-    // Arrows
-    line((-1.5, -0.5), (-0.3, -1.6), mark: (end: ">"))
-    line((1.5, -0.5), (0.3, -1.6), mark: (end: ">"))
-
-    // Labels
-    content((0, 0.3), text(size: 9pt)[Equal weight])
-    content((0, -3.2), text(size: 9pt)[Same syndrome!])
-  }),
-  caption: [Two errors with the same syndrome cause BP to fail]
-)
-
-When BP encounters degenerate errors of equal weight:
-
-#enum(
-  [BP assigns high probability to *both* solutions $bold(e)_1$ and $bold(e)_2$],
-  [The beliefs "split" between the two solutions],
-  [BP outputs $bold(e)^"BP" approx bold(e)_1 + bold(e)_2$],
-  [Check: $H dot bold(e)^"BP" = H dot (bold(e)_1 + bold(e)_2) = bold(s) + bold(s) = bold(0) eq.not bold(s)$],
-  [*BP fails to converge!*]
-)
-
-#keypoint[
-  For the Toric code, degeneracy is so prevalent that *BP alone shows no threshold* — increasing code distance makes performance worse, not better!
-]
-
-#pagebreak()
-
-= Ordered Statistics Decoding (OSD)
-
-== The Key Insight
-
-The parity check matrix $H$ (size $m times n$ with $n > m$) has more columns than rows and cannot be directly inverted.
-
-#keypoint[
-  We can select a subset of $r = "rank"(H)$ linearly independent columns to form an invertible $m times r$ submatrix!
-]
-
-#definition[
-  For an $m times n$ matrix $H$ with $"rank"(H) = r$:
-  - *Basis set* $[S]$: indices of $r$ linearly independent columns
-  - *Remainder set* $[T]$: indices of the remaining $k' = n - r$ columns
-  - $H_([S])$: the $m times r$ submatrix of columns in $[S]$ (this is invertible!)
-  - $H_([T])$: the $m times k'$ submatrix of columns in $[T]$
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Original matrix
-    rect((-4, -1), (-1, 1), fill: rgb("#f0f0f0"), name: "H")
-    content("H", $H$)
-    content((-2.5, -1.5), text(size: 9pt)[$m times n$])
-
-    // Arrow
-    line((-0.5, 0), (0.5, 0), mark: (end: ">"))
-    content((0, 0.5), text(size: 8pt)[split])
-
-    // Basis submatrix
-    rect((1, -1), (2.5, 1), fill: rgb("#e0ffe0"), name: "HS")
-    content("HS", $H_([S])$)
-    content((1.75, -1.5), text(size: 9pt)[$m times r$])
-    content((1.75, -2), text(size: 8pt)[invertible!])
-
-    // Remainder submatrix
-    rect((3, -1), (5, 1), fill: rgb("#ffe0e0"), name: "HT")
-    content("HT", $H_([T])$)
-    content((4, -1.5), text(size: 9pt)[$m times k'$])
-  }),
-  caption: [Splitting $H$ into basis and remainder parts]
-)
-
-#pagebreak()
-
-== OSD-0: The Basic Algorithm
-
-#definition[
-  *OSD-0* (zeroth-order OSD) finds a solution by:
-  1. Choosing a "good" basis $[S]$ using BP soft decisions $P_1$
-  2. Solving for the basis bits via matrix inversion
-  3. Setting all remainder bits to zero
-]
-
-#figure(
-  align(left)[
-    #box(
-      width: 100%,
-      stroke: 1pt,
-      inset: 12pt,
-      radius: 4pt,
-      fill: luma(250),
-      [
-        #text(weight: "bold")[Algorithm 2: OSD-0]
-        #v(0.5em)
-
-        *Input:*
-        - Parity matrix $H$ (size $m times n$, rank $r$)
-        - Syndrome $bold(s)$
-        - BP soft decisions $P_1(e_1), ..., P_1(e_n)$ (from Algorithm 1)
-
-        *Steps:*
-
-        #enum(
-          [*Rank bits by probability:*
-           Sort bit indices by $P_1$ values: most-likely-flipped first.
-           Result: ordered list $[O_"BP"] = (j_1, j_2, ..., j_n)$],
-
-          [*Reorder columns:*
-           $H_([O_"BP"])$ = matrix $H$ with columns reordered by $[O_"BP"]$],
-
-          [*Select basis:*
-           Scan left-to-right, select first $r$ linearly independent columns.
-           Basis indices: $[S]$. Remainder indices: $[T]$ (size $k' = n - r$)],
-
-          [*Solve on basis:*
-           $bold(e)_([S]) = H_([S])^(-1) dot bold(s)$],
-
-          [*Set remainder to zero:*
-           $bold(e)_([T]) = bold(0)$ (zero vector of length $k'$)],
-
-          [*Remap to original ordering:*
-           Combine $(bold(e)_([S]), bold(e)_([T]))$ and undo the permutation]
-        )
-
-        *Output:* $bold(e)^"OSD-0"$ satisfying $H dot bold(e)^"OSD-0" = bold(s)$
-      ]
-    )
-  ],
-  caption: [OSD-0 algorithm]
-)
-
-#pagebreak()
-
-== Why OSD Resolves Degeneracy
-
-#keypoint[
-  OSD resolves split beliefs by *forcing a unique solution*:
-  - The basis selection $[S]$ determines one specific solution
-  - BP soft decisions guide toward low-weight solutions
-  - Matrix inversion on $H_([S])$ eliminates ambiguity
-]
-
-== Higher-Order OSD
-
-OSD-0 assumes $bold(e)_([T]) = bold(0)$. This may miss the minimum-weight solution.
-
-#definition[
-  *Higher-order OSD* considers non-zero configurations of $bold(e)_([T])$.
-
-  For any choice of $bold(e)_([T])$, the corresponding basis solution is:
-  $ bold(e)_([S]) = H_([S])^(-1) dot (bold(s) + H_([T]) dot bold(e)_([T])) $
-
-  This always satisfies $H dot bold(e) = bold(s)$ (verify by substitution).
-]
-
-*Challenge:* With $k' = n - r$ remainder bits, there are $2^(k')$ possible configurations — exhaustive search is infeasible!
-
-== Combination Sweep Strategy (OSD-CS)
-
-#definition[
-  *Combination sweep* is a greedy search testing configurations by likelihood:
-
-  #enum(
-    [*Sort remainder bits:* Order bits in $[T]$ by BP soft decisions (most likely first)],
-    [*Test weight-1:* Set each single bit in $bold(e)_([T])$ to 1 (all $k'$ possibilities)],
-    [*Test weight-2:* Set each pair among the first $lambda$ bits to 1]
-  )
-
-  Keep the minimum-weight solution found.
-]
-
-Recall that the *binomial coefficient* $binom(lambda, 2) = (lambda(lambda-1))/2$ counts ways to choose 2 items from $lambda$.
-
-Total configurations: $k' + binom(lambda, 2)$
-
-With $lambda = 60$: $k' + 1770$ configurations (vs $2^(k')$ for exhaustive search!)
-
-#pagebreak()
-
-= The Complete BP+OSD Decoder
-
-== Algorithm Flow
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Input box
-    rect((-1.5, 6), (1.5, 7), radius: 0.1, name: "input")
-    content("input", [Input: $H$, $bold(s)$, $p$])
-
-    // BP box
-    rect((-1.5, 4), (1.5, 5), radius: 0.1, fill: rgb("#e8f4e8"), name: "bp")
-    content("bp", [Run BP])
-
-    // Decision diamond
-    line((0, 3.5), (1.2, 2.5), (0, 1.5), (-1.2, 2.5), close: true)
-    content((0, 2.5), text(size: 8pt)[Converged?])
-
-    // OSD box
-    rect((3, 1.7), (5.5, 2.8), radius: 0.1, fill: rgb("#fff4e8"), name: "osd")
-    content("osd", [Run OSD])
-
-    // Output boxes
-    rect((-1.5, -0.5), (1.5, 0.5), radius: 0.1, fill: rgb("#e8e8f4"), name: "out1")
-    content("out1", [Return $bold(e)^"BP"$])
-
-    rect((3, -0.5), (5.5, 0.5), radius: 0.1, fill: rgb("#e8e8f4"), name: "out2")
-    content("out2", [Return $bold(e)^"OSD"$])
-
-    // Arrows
-    line((0, 6), (0, 5.1), mark: (end: ">"))
-    line((0, 4), (0, 3.6), mark: (end: ">"))
-    line((0, 1.5), (0, 0.6), mark: (end: ">"))
-    content((-0.5, 1), text(size: 8pt)[Yes])
-
-    line((1.2, 2.5), (2.9, 2.5), mark: (end: ">"))
-    content((2, 2.9), text(size: 8pt)[No])
-
-    line((4.25, 1.6), (4.25, 0.6), mark: (end: ">"))
-  }),
-  caption: [BP+OSD decoder flowchart]
-)
-
-#keypoint[
-  - If BP succeeds (converges): use BP result — fast!
-  - If BP fails: use OSD to resolve degeneracy — always gives valid answer
-]
-
-#pagebreak()
-
-== Complete Algorithm: BP+OSD-CS
-
-#figure(
-  align(left)[
-    #box(
-      width: 100%,
-      stroke: 1pt,
-      inset: 12pt,
-      radius: 4pt,
-      fill: luma(250),
-      [
-        #text(weight: "bold", size: 10pt)[Algorithm 3: BP+OSD-CS Decoder]
-        #v(0.5em)
-        #text(size: 8.5pt)[
-          ```
-          Input: Parity matrix H (m×n, rank r), syndrome s, error prob p, depth λ=60
-          Output: Error estimate e satisfying H·e = s
-
-          function BP_OSD_CS(H, s, p, λ):
-              // ===== STAGE 1: Run Belief Propagation (Algorithm 1) =====
-              (converged, e_BP, P_1) = BP(H, s, p)
-              if converged:
-                  return e_BP
-
-              // ===== STAGE 2: OSD-0 (Algorithm 2) =====
-              [O_BP] = argsort(P_1)              // Sort: most likely flipped first
-              H_sorted = H[:, O_BP]              // Reorder columns
-              [S] = first r linearly independent columns of H_sorted
-              [T] = remaining k' = n - r columns
-
-              e_[S] = H_[S]^(-1) × s             // Solve on basis
-              e_[T] = zeros(k')                  // Set remainder to zero
-              best = (e_[S], e_[T])
-              best_wt = hamming_weight(best)
-
-              // ===== STAGE 3: Combination Sweep =====
-              // Weight-1 search: try flipping each remainder bit
-              for i = 0 to k'-1:
-                  e_[T] = zeros(k');  e_[T][i] = 1
-                  e_[S] = H_[S]^(-1) × (s + H_[T] × e_[T])
-                  if hamming_weight((e_[S], e_[T])) < best_wt:
-                      best = (e_[S], e_[T])
-                      best_wt = hamming_weight(best)
-
-              // Weight-2 search: try flipping pairs in first λ bits
-              for i = 0 to min(λ, k')-1:
-                  for j = i+1 to min(λ, k')-1:
-                      e_[T] = zeros(k');  e_[T][i] = 1;  e_[T][j] = 1
-                      e_[S] = H_[S]^(-1) × (s + H_[T] × e_[T])
-                      if hamming_weight((e_[S], e_[T])) < best_wt:
-                          best = (e_[S], e_[T])
-                          best_wt = hamming_weight(best)
-
-              return inverse_permute(best, O_BP)  // Remap to original ordering
-          ```
-        ]
-      ]
-    )
-  ],
-  caption: [Complete BP+OSD-CS algorithm]
-)
-
-#pagebreak()
-
 = Results and Performance
 
 == Error Threshold

@@ -57,23 +57,23 @@ class TestProbTag:
 
     def test_p001(self):
         """Test conversion of p=0.01."""
-        assert prob_tag(0.01) == "p0010"
+        assert prob_tag(0.01) == "p0100"
 
     def test_p0001(self):
         """Test conversion of p=0.001."""
-        assert prob_tag(0.001) == "p0001"
+        assert prob_tag(0.001) == "p0010"
 
     def test_p005(self):
         """Test conversion of p=0.05."""
-        assert prob_tag(0.05) == "p0050"
+        assert prob_tag(0.05) == "p0500"
 
     def test_p01(self):
         """Test conversion of p=0.1."""
-        assert prob_tag(0.1) == "p0100"
+        assert prob_tag(0.1) == "p1000"
 
     def test_p0005(self):
         """Test conversion of p=0.005."""
-        assert prob_tag(0.005) == "p0005"
+        assert prob_tag(0.005) == "p0050"
 
 
 class TestGenerateCircuit:
@@ -167,9 +167,9 @@ class TestGenerateFilename:
     def test_basic_filename(self):
         """Test basic filename generation."""
         filename = generate_filename(distance=3, rounds=5, p=0.01, task="z")
-        assert filename == "sc_d3_r5_p0010_z.stim"
+        assert filename == "sc_d3_r5_p0100_z.stim"
 
     def test_x_task(self):
         """Test filename with x task."""
         filename = generate_filename(distance=5, rounds=7, p=0.001, task="x")
-        assert filename == "sc_d5_r7_p0001_x.stim"
+        assert filename == "sc_d5_r7_p0010_x.stim"

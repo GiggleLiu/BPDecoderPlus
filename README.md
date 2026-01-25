@@ -171,6 +171,24 @@ python examples/evidence_example.py
 python examples/minimal_example.py
 ```
 
+### Tanner Graph Decoding Tutorial
+
+For a comprehensive walkthrough of using Belief Propagation on Tanner graphs for surface code decoding, see the [Tanner Graph Walkthrough](https://giggleliu.github.io/BPDecoderPlus/tanner_graph_walkthrough/) documentation.
+
+The walkthrough covers:
+
+- **Tanner graph theory** - Bipartite graph representation of parity check codes
+- **Complete decoding pipeline** - From circuit generation to BP decoding and evaluation
+- **Visualization** - Interactive graph structures and convergence analysis
+- **Parameter tuning** - Damping, tolerance, and iteration optimization
+- **Hands-on examples** - Runnable code with d=3 surface code datasets
+
+**Run the companion script:**
+
+```bash
+uv run python examples/tanner_graph_walkthrough.py
+```
+
 ## Project Structure
 
 ```
