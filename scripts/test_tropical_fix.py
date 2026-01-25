@@ -2,6 +2,8 @@
 """
 Quick test to verify the Tropical TN fix matches MWPM.
 
+Uses bpdecoderplus.dem functions for parity check matrix construction.
+
 Usage:
     uv run python scripts/test_tropical_fix.py
 """
@@ -10,43 +12,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import math
 import numpy as np
 import stim
-import pymatching
 
+from bpdecoderplus.dem import build_parity_check_matrix
 
-def build_parity_check_matrix_from_matching(matcher):
-    """Build parity check matrix from pymatching's Matching graph."""
-    n_detectors = matcher.num_detectors
-    edges = matcher.edges()
-    n_edges = len(edges)
-
-    H = np.zeros((n_detectors, n_edges), dtype=np.uint8)
-    priors = np.zeros(n_edges, dtype=np.float64)
-    obs_flip = np.zeros(n_edges, dtype=np.uint8)
-
-    for j, (node1, node2, data) in enumerate(edges):
-        weight = data.get('weight', 1.0)
-        error_prob = data.get('error_probability', -1.0)
-        fault_ids = data.get('fault_ids', set())
-
-        if error_prob < 0 and weight >= 0:
-            error_prob = 1.0 / (1.0 + math.exp(weight))
-        elif error_prob < 0:
-            error_prob = 0.01
-
-        priors[j] = np.clip(error_prob, 1e-10, 1 - 1e-10)
-
-        if node1 is not None and 0 <= node1 < n_detectors:
-            H[node1, j] = 1
-        if node2 is not None and 0 <= node2 < n_detectors:
-            H[node2, j] = 1
-
-        if fault_ids:
-            obs_flip[j] = 1
-
-    return H, priors, obs_flip
+try:
+    import pymatching
+    HAS_PYMATCHING = True
+except ImportError:
+    HAS_PYMATCHING = False
 
 
 def build_uai(H, priors, syndrome):
@@ -103,6 +78,7 @@ def build_uai(H, priors, syndrome):
 def main():
     print("=" * 60)
     print("Testing Tropical TN Fix - Quick Verification")
+    print("(Using bpdecoderplus.dem for parity check matrix)")
     print("=" * 60)
     
     from tropical_in_new.src import mpe_tropical
@@ -120,15 +96,20 @@ def main():
     )
     dem = circuit.detector_error_model(decompose_errors=True)
     
-    # Create matcher
-    matcher = pymatching.Matching.from_detector_error_model(dem)
-    H, priors, obs_flip = build_parity_check_matrix_from_matching(matcher)
+    # Build parity check matrix using bpdecoderplus.dem
+    # Use merge_hyperedges=True for faster computation (smaller matrix)
+    # obs_flip will be thresholded at 0.5 for observable prediction
+    H, priors, obs_flip = build_parity_check_matrix(
+        dem,
+        split_by_separator=True,
+        merge_hyperedges=True,  # Faster with smaller matrix
+    )
     
     print(f"\nTest setup:")
     print(f"  DEM: {dem.num_detectors} detectors, {dem.num_observables} observables")
-    print(f"  Matcher: {matcher.num_edges} edges, {matcher.num_fault_ids} fault_ids")
     print(f"  Matrix H: {H.shape}")
-    print(f"  obs_flip: {np.sum(obs_flip)} edges flip observable (out of {len(obs_flip)})")
+    print(f"  obs_flip: {np.sum(obs_flip)} errors flip observable (out of {len(obs_flip)})")
+    print(f"  obs_flip unique values: {np.unique(obs_flip)}")
     
     # Sample
     sampler = circuit.compile_detector_sampler()
@@ -136,10 +117,16 @@ def main():
     syndromes = samples[:, :-1].astype(np.uint8)
     observables = samples[:, -1].astype(np.int32)
     
-    # MWPM decode
-    mwpm_preds = matcher.decode_batch(syndromes)
-    if mwpm_preds.ndim > 1:
-        mwpm_preds = mwpm_preds.flatten()
+    # MWPM decode (if available)
+    mwpm_preds = None
+    if HAS_PYMATCHING:
+        matcher = pymatching.Matching.from_detector_error_model(dem)
+        mwpm_preds = matcher.decode_batch(syndromes)
+        if mwpm_preds.ndim > 1:
+            mwpm_preds = mwpm_preds.flatten()
+        print(f"  MWPM available: Yes")
+    else:
+        print(f"  MWPM available: No (pymatching not installed)")
     
     print(f"\nDecoding {len(syndromes)} samples...")
     
@@ -150,7 +137,6 @@ def main():
     for i in range(len(syndromes)):
         syndrome = syndromes[i]
         actual = observables[i]
-        mwpm_pred = int(mwpm_preds[i])
         
         # Tropical TN
         uai_str = build_uai(H, priors, syndrome)
@@ -161,30 +147,42 @@ def main():
         for j in range(H.shape[1]):
             solution[j] = assignment.get(j + 1, 0)
         
-        tropical_pred = int(np.dot(solution, obs_flip.astype(int)) % 2)
+        # Threshold obs_flip at 0.5 for soft values from hyperedge merging
+        obs_flip_binary = (obs_flip > 0.5).astype(int)
+        tropical_pred = int(np.dot(solution, obs_flip_binary) % 2)
         
         if tropical_pred == actual:
             tropical_correct += 1
-        if mwpm_pred == actual:
-            mwpm_correct += 1
-        if tropical_pred == mwpm_pred:
-            agrees += 1
-        else:
-            print(f"  Sample {i}: Tropical={tropical_pred}, MWPM={mwpm_pred}, Actual={actual}")
+        
+        if mwpm_preds is not None:
+            mwpm_pred = int(mwpm_preds[i])
+            if mwpm_pred == actual:
+                mwpm_correct += 1
+            if tropical_pred == mwpm_pred:
+                agrees += 1
+            elif i < 10:  # Only print first 10 disagreements
+                print(f"  Sample {i}: Tropical={tropical_pred}, MWPM={mwpm_pred}, Actual={actual}")
     
     print(f"\nResults ({len(syndromes)} samples):")
     print(f"  Tropical correct: {tropical_correct}/{len(syndromes)} ({100*tropical_correct/len(syndromes):.1f}%)")
-    print(f"  MWPM correct: {mwpm_correct}/{len(syndromes)} ({100*mwpm_correct/len(syndromes):.1f}%)")
-    print(f"  Tropical agrees with MWPM: {agrees}/{len(syndromes)} ({100*agrees/len(syndromes):.1f}%)")
     
-    agreement_rate = 100*agrees/len(syndromes)
-    if agreement_rate >= 95:
-        print(f"\n✓ SUCCESS: Tropical TN matches MWPM on {agreement_rate:.1f}% of samples!")
-        if agrees < len(syndromes):
-            print("  (Disagreements may be due to degeneracy - multiple optimal solutions)")
+    if mwpm_preds is not None:
+        print(f"  MWPM correct: {mwpm_correct}/{len(syndromes)} ({100*mwpm_correct/len(syndromes):.1f}%)")
+        print(f"  Tropical agrees with MWPM: {agrees}/{len(syndromes)} ({100*agrees/len(syndromes):.1f}%)")
+        
+        agreement_rate = 100*agrees/len(syndromes)
+        if agreement_rate >= 95:
+            print(f"\n✓ SUCCESS: Tropical TN matches MWPM on {agreement_rate:.1f}% of samples!")
+            if agrees < len(syndromes):
+                print("  (Disagreements may be due to degeneracy - multiple optimal solutions)")
+        else:
+            print(f"\n✗ WARNING: Tropical TN differs from MWPM on {len(syndromes)-agrees} samples ({100-agreement_rate:.1f}%)")
+            print("  This suggests a bug in the decoder")
     else:
-        print(f"\n✗ WARNING: Tropical TN differs from MWPM on {len(syndromes)-agrees} samples ({100-agreement_rate:.1f}%)")
-        print("  This suggests a bug in the decoder")
+        if tropical_correct >= len(syndromes) * 0.95:
+            print(f"\n✓ SUCCESS: Tropical TN achieves {100*tropical_correct/len(syndromes):.1f}% accuracy")
+        else:
+            print(f"\n✗ WARNING: Tropical TN accuracy is low")
 
 
 if __name__ == "__main__":

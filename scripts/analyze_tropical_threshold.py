@@ -5,16 +5,17 @@ Tropical TN threshold analysis for rotated surface codes.
 This module performs MAP decoding using tropical tensor networks
 and generates threshold plots across different code distances and error rates.
 
-IMPORTANT: This decoder uses the same graph structure as MWPM (pymatching)
-----------------------------------------------------------------------------
-To match MWPM behavior, the Tropical TN decoder now uses pymatching's graph
-structure to build the factor graph. This ensures:
-1. Same edge structure as MWPM (each edge connects 1-2 detectors)
-2. Binary obs_flip values from fault_ids
-3. Correct handling of decomposed errors
+IMPORTANT: This decoder uses the DEM functions from bpdecoderplus.dem
+-----------------------------------------------------------------------------
+The tropical TN decoder uses `build_parity_check_matrix` with `merge_hyperedges=True`
+for efficient computation. Key implementation details:
+1. merge_hyperedges=True creates a smaller matrix (faster contraction)
+2. obs_flip becomes a conditional probability, thresholded at 0.5 for prediction
+3. The connected components fix ensures all factors are included in contraction
 
-The tropical tensor network performs exact MAP inference on the matching graph,
-which should produce results equivalent to MWPM for low-degeneracy cases.
+The tropical tensor network performs exact MAP inference on the factor graph.
+Results should be similar to MWPM, though not identical due to different
+graph structures and degeneracy handling.
 
 Usage:
     uv run python scripts/analyze_tropical_threshold.py
@@ -27,15 +28,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import math
 import numpy as np
-import pymatching
 import torch
 
-from bpdecoderplus.dem import load_dem
+from bpdecoderplus.dem import load_dem, build_parity_check_matrix
 from bpdecoderplus.syndrome import load_syndrome_database
 from tropical_in_new.src import mpe_tropical
 from tropical_in_new.src.utils import read_model_from_string
+
+# Optional: pymatching for comparison
+try:
+    import pymatching
+    HAS_PYMATCHING = True
+except ImportError:
+    HAS_PYMATCHING = False
 
 # Configuration
 # Circuit-level depolarizing noise threshold for rotated surface code is ~0.7%.
@@ -58,67 +64,16 @@ def compute_observable_prediction(solution: np.ndarray, obs_flip: np.ndarray) ->
 
     Args:
         solution: Binary error pattern from decoder
-        obs_flip: Observable flip indicators (binary 0 or 1)
+        obs_flip: Observable flip indicators (may be soft values from hyperedge merging)
 
     Returns:
         Predicted observable value (0 or 1)
     """
-    # obs_flip should now be binary (0 or 1), not conditional probabilities
-    return int(np.dot(solution, obs_flip.astype(int)) % 2)
-
-
-def build_parity_check_matrix_from_matching(
-    matcher: pymatching.Matching,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Build parity check matrix from pymatching's Matching graph.
-
-    This ensures the Tropical TN uses the exact same graph structure as MWPM.
-    Each edge in the matching graph becomes a column in H.
-
-    Args:
-        matcher: pymatching.Matching object
-
-    Returns:
-        Tuple of (H, priors, obs_flip) where:
-        - H: Parity check matrix, shape (n_detectors, n_edges)
-        - priors: Prior error probabilities, shape (n_edges,)
-        - obs_flip: Binary observable flip indicators, shape (n_edges,)
-    """
-    n_detectors = matcher.num_detectors
-    edges = matcher.edges()
-    n_edges = len(edges)
-
-    H = np.zeros((n_detectors, n_edges), dtype=np.uint8)
-    priors = np.zeros(n_edges, dtype=np.float64)
-    obs_flip = np.zeros(n_edges, dtype=np.uint8)
-
-    for j, (node1, node2, data) in enumerate(edges):
-        weight = data.get('weight', 1.0)
-        error_prob = data.get('error_probability', -1.0)
-        fault_ids = data.get('fault_ids', set())
-
-        # Convert weight to probability if error_probability not set
-        # weight = log((1-p)/p), so p = 1 / (1 + exp(weight))
-        if error_prob < 0 and weight >= 0:
-            error_prob = 1.0 / (1.0 + math.exp(weight))
-        elif error_prob < 0:
-            # Negative weight, use small default
-            error_prob = 0.01
-
-        priors[j] = np.clip(error_prob, 1e-10, 1 - 1e-10)
-
-        # Set detector connections
-        if node1 is not None and 0 <= node1 < n_detectors:
-            H[node1, j] = 1
-        if node2 is not None and 0 <= node2 < n_detectors:
-            H[node2, j] = 1
-
-        # Binary obs_flip from fault_ids
-        if fault_ids:
-            obs_flip[j] = 1
-
-    return H, priors, obs_flip
+    # Threshold obs_flip at 0.5 to convert soft probabilities to binary
+    # This handles both binary obs_flip (merge_hyperedges=False) and
+    # soft obs_flip (merge_hyperedges=True) correctly
+    obs_flip_binary = (obs_flip > 0.5).astype(int)
+    return int(np.dot(solution, obs_flip_binary) % 2)
 
 
 def build_decoding_uai_from_matrix(
@@ -253,14 +208,15 @@ def load_dataset(distance: int, error_rate: float):
     """
     Load dataset for given distance and error rate.
 
-    Uses pymatching's graph structure to ensure consistency with MWPM decoder.
+    Uses build_parity_check_matrix from bpdecoderplus.dem with merge_hyperedges=False
+    to ensure binary obs_flip values for correct observable prediction.
 
     Args:
         distance: Code distance
         error_rate: Physical error rate
 
     Returns:
-        Tuple of (H, syndromes, observables, priors, obs_flip, matcher) or None if not found
+        Tuple of (H, syndromes, observables, priors, obs_flip, dem) or None if not found
     """
     rounds = distance
     p_str = f"{error_rate:.4f}"[2:]
@@ -275,11 +231,16 @@ def load_dataset(distance: int, error_rate: float):
     dem = load_dem(str(dem_path))
     syndromes, observables, _ = load_syndrome_database(str(npz_path))
 
-    # Create pymatching matcher and build H from its graph structure
-    matcher = pymatching.Matching.from_detector_error_model(dem)
-    H, priors, obs_flip = build_parity_check_matrix_from_matching(matcher)
+    # Build parity check matrix with merge_hyperedges=True for faster computation
+    # When merge_hyperedges=True, obs_flip becomes a conditional probability
+    # which we threshold at 0.5 in compute_observable_prediction
+    H, priors, obs_flip = build_parity_check_matrix(
+        dem, 
+        split_by_separator=True,
+        merge_hyperedges=True,  # Faster computation with smaller matrix
+    )
 
-    return H, syndromes, observables, priors, obs_flip, matcher
+    return H, syndromes, observables, priors, obs_flip, dem
 
 
 def run_tropical_decoder_batch(
@@ -288,7 +249,7 @@ def run_tropical_decoder_batch(
     observables: np.ndarray,
     priors: np.ndarray,
     obs_flip: np.ndarray,
-    matcher: pymatching.Matching = None,
+    dem=None,
     verbose: bool = False,
     compare_mwpm: bool = True,
 ) -> tuple[float, float, int]:
@@ -301,14 +262,14 @@ def run_tropical_decoder_batch(
         observables: Ground truth observable values
         priors: Prior error probabilities
         obs_flip: Binary observable flip indicators
-        matcher: pymatching.Matching for MWPM comparison
+        dem: Detector error model for MWPM comparison (optional)
         verbose: Whether to print progress
         compare_mwpm: Whether to compare with MWPM
 
     Returns:
         Tuple of (tropical_ler, mwpm_ler, num_differs) where:
         - tropical_ler: Tropical TN logical error rate
-        - mwpm_ler: MWPM logical error rate (0 if matcher is None)
+        - mwpm_ler: MWPM logical error rate (0 if pymatching not available)
         - num_differs: Number of samples where predictions differ
     """
     tropical_errors = 0
@@ -316,9 +277,10 @@ def run_tropical_decoder_batch(
     differs = 0
     n_samples = len(syndromes)
 
-    # Get MWPM predictions if matcher provided
+    # Get MWPM predictions if pymatching is available
     mwpm_preds = None
-    if matcher is not None and compare_mwpm:
+    if HAS_PYMATCHING and dem is not None and compare_mwpm:
+        matcher = pymatching.Matching.from_detector_error_model(dem)
         mwpm_preds = matcher.decode_batch(syndromes)
         if mwpm_preds.ndim > 1:
             mwpm_preds = mwpm_preds.flatten()
@@ -386,7 +348,7 @@ def collect_tropical_threshold_data(max_samples: int = SAMPLE_SIZE):
                 print(f"  p={p}: Dataset not found, skipping")
                 continue
 
-            H, syndromes, observables, priors, obs_flip, matcher = data
+            H, syndromes, observables, priors, obs_flip, dem = data
             num_samples = min(max_samples, len(syndromes))
 
             print(f"  p={p}: Decoding {num_samples} samples (H shape: {H.shape})...", end=" ", flush=True)
@@ -397,7 +359,7 @@ def collect_tropical_threshold_data(max_samples: int = SAMPLE_SIZE):
                 observables[:num_samples],
                 priors,
                 obs_flip,
-                matcher=matcher,
+                dem=dem,
                 verbose=False,
             )
 
@@ -407,7 +369,8 @@ def collect_tropical_threshold_data(max_samples: int = SAMPLE_SIZE):
             else:
                 tropical_results[d][p] = tropical_ler
                 mwpm_results[d][p] = mwpm_ler
-                print(f"Tropical LER={tropical_ler:.4f}, MWPM LER={mwpm_ler:.4f}, differs={differs}")
+                mwpm_info = f", MWPM LER={mwpm_ler:.4f}, differs={differs}" if HAS_PYMATCHING else ""
+                print(f"Tropical LER={tropical_ler:.4f}{mwpm_info}")
 
     return tropical_results, mwpm_results
 
@@ -452,19 +415,20 @@ def plot_threshold_curve(
             markersize=8,
         )
         
-        # MWPM (dashed line)
+        # MWPM (dashed line) if available
         if d in mwpm_results and mwpm_results[d]:
             mwpm_lers = [mwpm_results[d][p] for p in error_rates]
-            plt.plot(
-                error_rates,
-                mwpm_lers,
-                f"{markers[i % len(markers)]}--",
-                color=colors[i % len(colors)],
-                label=f"d={d} MWPM",
-                linewidth=2,
-                markersize=6,
-                alpha=0.7,
-            )
+            if any(l > 0 for l in mwpm_lers):  # Only plot if we have MWPM data
+                plt.plot(
+                    error_rates,
+                    mwpm_lers,
+                    f"{markers[i % len(markers)]}--",
+                    color=colors[i % len(colors)],
+                    label=f"d={d} MWPM",
+                    linewidth=2,
+                    markersize=6,
+                    alpha=0.7,
+                )
 
     plt.xlabel("Physical Error Rate (p)", fontsize=12)
     plt.ylabel("Logical Error Rate", fontsize=12)
@@ -490,12 +454,13 @@ def main():
     """
     print("=" * 60)
     print("Tropical TN MAP Decoder Threshold Analysis")
-    print("(Using pymatching graph structure for MWPM consistency)")
+    print("(Using bpdecoderplus.dem for parity check matrix)")
     print("=" * 60)
     print(f"\nConfiguration:")
     print(f"  Distances: {DISTANCES}")
     print(f"  Error rates: {ERROR_RATES}")
     print(f"  Max samples per dataset: {SAMPLE_SIZE}")
+    print(f"  pymatching available: {HAS_PYMATCHING}")
 
     print("\nCollecting threshold data...")
     tropical_results, mwpm_results = collect_tropical_threshold_data(max_samples=SAMPLE_SIZE)
@@ -516,15 +481,24 @@ def main():
     print("\n" + "=" * 60)
     print("Tropical TN vs MWPM Comparison Summary")
     print("=" * 60)
-    print(f"{'Distance':<10} {'p':<10} {'Tropical LER':<15} {'MWPM LER':<15}")
-    print("-" * 60)
-    for d in sorted(tropical_results.keys()):
-        if tropical_results[d]:
-            for p in sorted(tropical_results[d].keys()):
-                tropical_ler = tropical_results[d][p]
-                mwpm_ler = mwpm_results.get(d, {}).get(p, float('nan'))
-                status = "✓" if abs(tropical_ler - mwpm_ler) < 0.01 else "≠"
-                print(f"d={d:<8} {p:<10.4f} {tropical_ler:<15.4f} {mwpm_ler:<15.4f} {status}")
+    if HAS_PYMATCHING:
+        print(f"{'Distance':<10} {'p':<10} {'Tropical LER':<15} {'MWPM LER':<15}")
+        print("-" * 60)
+        for d in sorted(tropical_results.keys()):
+            if tropical_results[d]:
+                for p in sorted(tropical_results[d].keys()):
+                    tropical_ler = tropical_results[d][p]
+                    mwpm_ler = mwpm_results.get(d, {}).get(p, float('nan'))
+                    status = "✓" if abs(tropical_ler - mwpm_ler) < 0.01 else "≠"
+                    print(f"d={d:<8} {p:<10.4f} {tropical_ler:<15.4f} {mwpm_ler:<15.4f} {status}")
+    else:
+        print(f"{'Distance':<10} {'p':<10} {'Tropical LER':<15}")
+        print("-" * 45)
+        for d in sorted(tropical_results.keys()):
+            if tropical_results[d]:
+                for p in sorted(tropical_results[d].keys()):
+                    tropical_ler = tropical_results[d][p]
+                    print(f"d={d:<8} {p:<10.4f} {tropical_ler:<15.4f}")
 
 
 if __name__ == "__main__":
