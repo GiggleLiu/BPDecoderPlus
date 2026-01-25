@@ -2830,6 +2830,87 @@ The connection to tropical algebra becomes clear: if we replace standard tensor 
   caption: [Correspondence between standard and tropical tensor operations]
 )
 
+*Example:* Consider a simple Markov chain with three binary variables $x_1, x_2, x_3 in {0, 1}$ and two factors:
+
+$ P(x_1, x_2, x_3) = phi_1(x_1, x_2) dot phi_2(x_2, x_3) $
+
+#figure(
+  canvas({
+    import draw: *
+    set-style(stroke: 0.8pt)
+
+    // Factor graph at top
+    content((0, 3.2), text(weight: "bold", size: 9pt)[Factor Graph])
+
+    // Variable nodes (circles)
+    circle((-1.5, 2.2), radius: 0.3, fill: white, name: "x1")
+    content("x1", text(size: 8pt)[$x_1$])
+    circle((0, 2.2), radius: 0.3, fill: white, name: "x2")
+    content("x2", text(size: 8pt)[$x_2$])
+    circle((1.5, 2.2), radius: 0.3, fill: white, name: "x3")
+    content("x3", text(size: 8pt)[$x_3$])
+
+    // Factor nodes (squares)
+    rect((-0.95, 2.0), (-0.55, 2.4), fill: rgb("#e0e0e0"), name: "phi1")
+    content("phi1", text(size: 6pt)[$phi_1$])
+    rect((0.55, 2.0), (0.95, 2.4), fill: rgb("#e0e0e0"), name: "phi2")
+    content("phi2", text(size: 6pt)[$phi_2$])
+
+    // Factor graph edges
+    line((-1.2, 2.2), (-0.95, 2.2))
+    line((-0.55, 2.2), (-0.3, 2.2))
+    line((0.3, 2.2), (0.55, 2.2))
+    line((0.95, 2.2), (1.2, 2.2))
+
+    // Arrows down to two paths
+    line((-0.5, 1.6), (-2.5, 0.8), mark: (end: ">"))
+    line((0.5, 1.6), (2.5, 0.8), mark: (end: ">"))
+
+    // Left path: Standard algebra
+    content((-2.5, 0.5), text(weight: "bold", size: 8pt)[Standard Algebra])
+    rect((-3.8, -0.6), (-1.2, 0.2), stroke: 0.5pt, fill: rgb("#f0f7ff"))
+    content((-2.5, -0.2), text(size: 8pt)[$Z = sum_(x_1,x_2,x_3) phi_1 dot phi_2$])
+
+    // Right path: Tropical algebra
+    content((2.5, 0.5), text(weight: "bold", size: 8pt)[Tropical Algebra])
+    rect((1.2, -0.6), (3.8, 0.2), stroke: 0.5pt, fill: rgb("#fffaf0"))
+    content((2.5, -0.2), text(size: 8pt)[$Z_"trop" = max_(x_1,x_2,x_3) (log phi_1 + log phi_2)$])
+
+    // Operations labels
+    content((-2.5, -0.9), text(size: 7pt, fill: gray)[sum + multiply])
+    content((2.5, -0.9), text(size: 7pt, fill: gray)[max + add])
+
+    // Arrows to results
+    line((-2.5, -1.2), (-2.5, -1.6), mark: (end: ">"))
+    line((2.5, -1.2), (2.5, -1.6), mark: (end: ">"))
+
+    // Results
+    content((-2.5, -1.9), text(size: 8pt)[Partition function $Z$])
+    content((2.5, -1.9), text(size: 8pt)[Max log-probability])
+
+    // Log transform arrow connecting the two
+    line((-1.0, -1.9), (0.8, -1.9), stroke: (dash: "dashed"), mark: (end: ">"))
+    content((0, -1.6), text(size: 6pt, fill: gray)[log transform])
+  }),
+  caption: [Standard vs tropical contraction of a Markov chain. The same factor graph structure supports both marginal computation (standard algebra) and MAP inference (tropical algebra).]
+)
+
+The partition function in standard algebra sums over all configurations:
+$ Z = sum_(x_1, x_2, x_3) phi_1(x_1, x_2) dot phi_2(x_2, x_3) $
+
+The same structure in tropical algebra computes the maximum log-probability:
+$ Z_"trop" = max_(x_1, x_2, x_3) [log phi_1(x_1, x_2) + log phi_2(x_2, x_3)] $
+
+#keypoint[
+  *Beyond a Change of Language* @liu2021tropical: Tropical tensor networks provide computational capabilities unavailable in traditional approaches:
+
+  + *Automatic Differentiation for Configuration Recovery*: Backpropagating through tropical contraction yields gradient "masks" that directly identify optimal variable assignments $bold(x)^*$---no separate search phase is needed.
+
+  + *Degeneracy Counting via Mixed Algebras*: By tracking $(Z_"trop", n)$ where $n$ counts multiplicities, one simultaneously finds the optimal value AND counts all solutions achieving it in a single contraction pass.
+
+  + *GPU-Accelerated Tropical BLAS*: Tropical matrix multiplication maps to highly optimized GPU kernels, enabling exact ground states for 1024-spin Ising models and 512-qubit D-Wave graphs in under 100 seconds.
+]
+
 == Tensor Network Representation
 
 A tensor network represents the factorized probability dis
