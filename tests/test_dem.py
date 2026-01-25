@@ -11,6 +11,7 @@ import stim
 
 from bpdecoderplus.circuit import generate_circuit
 from bpdecoderplus.dem import (
+    _split_error_by_separator,
     build_parity_check_matrix,
     dem_to_dict,
     dem_to_uai,
@@ -294,3 +295,155 @@ class TestGenerateUaiFromCircuit:
 
             assert uai_path == custom_output
             assert uai_path.exists()
+
+
+class TestSplitErrorBySeparator:
+    """Tests for ^ separator handling in DEM parsing.
+
+    CRITICAL: These tests verify that error instructions with ^ separators
+    are correctly split into independent components. This is required for
+    correct BP decoding - without it, the parity check matrix has wrong
+    structure and threshold analysis produces invalid results.
+    """
+
+    def test_no_separator(self):
+        """Test targets without ^ separator return single component."""
+        # Simulate targets for "D0 D1 L0"
+        dem = stim.DetectorErrorModel("error(0.01) D0 D1 L0")
+        inst = list(dem.flattened())[0]
+        targets = inst.targets_copy()
+
+        components = _split_error_by_separator(targets)
+
+        assert len(components) == 1
+        assert components[0]["detectors"] == [0, 1]
+        assert components[0]["observables"] == [0]
+
+    def test_single_separator(self):
+        """Test targets with one ^ separator split into two components."""
+        # Simulate targets for "D0 D1 ^ D2"
+        dem = stim.DetectorErrorModel("error(0.01) D0 D1 ^ D2")
+        inst = list(dem.flattened())[0]
+        targets = inst.targets_copy()
+
+        components = _split_error_by_separator(targets)
+
+        assert len(components) == 2
+        assert components[0]["detectors"] == [0, 1]
+        assert components[0]["observables"] == []
+        assert components[1]["detectors"] == [2]
+        assert components[1]["observables"] == []
+
+    def test_multiple_separators(self):
+        """Test targets with multiple ^ separators split correctly."""
+        # Simulate targets for "D0 ^ D1 ^ D2 L0"
+        dem = stim.DetectorErrorModel("error(0.01) D0 ^ D1 ^ D2 L0")
+        inst = list(dem.flattened())[0]
+        targets = inst.targets_copy()
+
+        components = _split_error_by_separator(targets)
+
+        assert len(components) == 3
+        assert components[0]["detectors"] == [0]
+        assert components[1]["detectors"] == [1]
+        assert components[2]["detectors"] == [2]
+        assert components[2]["observables"] == [0]
+
+    def test_observable_in_first_component(self):
+        """Test observable correctly assigned to first component."""
+        dem = stim.DetectorErrorModel("error(0.01) D0 L0 ^ D1")
+        inst = list(dem.flattened())[0]
+        targets = inst.targets_copy()
+
+        components = _split_error_by_separator(targets)
+
+        assert len(components) == 2
+        assert components[0]["detectors"] == [0]
+        assert components[0]["observables"] == [0]
+        assert components[1]["detectors"] == [1]
+        assert components[1]["observables"] == []
+
+
+class TestBuildParityCheckMatrixSeparator:
+    """Test that build_parity_check_matrix handles ^ separators correctly."""
+
+    def test_separator_creates_multiple_columns(self):
+        """Verify ^ separator creates multiple columns in H matrix.
+
+        CRITICAL: This test catches the bug where ^ separators are ignored,
+        causing wrong H matrix structure and invalid decoding results.
+        """
+        # Create DEM with ^ separator
+        dem = stim.DetectorErrorModel("""
+            error(0.01) D0 D1 ^ D2
+            error(0.02) D1
+        """)
+
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=True)
+
+        # Should have 3 columns: 2 from first error (split by ^), 1 from second
+        assert H.shape[1] == 3, (
+            f"Expected 3 columns (2 from 'D0 D1 ^ D2', 1 from 'D1'), got {H.shape[1]}. "
+            "This indicates ^ separator is not being handled correctly."
+        )
+
+        # First column: D0, D1
+        assert H[0, 0] == 1 and H[1, 0] == 1 and H[2, 0] == 0
+        # Second column: D2
+        assert H[0, 1] == 0 and H[1, 1] == 0 and H[2, 1] == 1
+        # Third column: D1
+        assert H[0, 2] == 0 and H[1, 2] == 1 and H[2, 2] == 0
+
+        # Both columns from first error share same probability
+        assert priors[0] == 0.01
+        assert priors[1] == 0.01
+        assert priors[2] == 0.02
+
+    def test_no_split_option(self):
+        """Test split_by_separator=False keeps all targets in one column."""
+        dem = stim.DetectorErrorModel("""
+            error(0.01) D0 D1 ^ D2
+            error(0.02) D1
+        """)
+
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=False)
+
+        # Should have 2 columns: 1 from first error (no split), 1 from second
+        assert H.shape[1] == 2, (
+            f"Expected 2 columns with split_by_separator=False, got {H.shape[1]}"
+        )
+
+        # First column: D0, D1, D2 all together
+        assert H[0, 0] == 1 and H[1, 0] == 1 and H[2, 0] == 1
+        # Second column: D1
+        assert H[0, 1] == 0 and H[1, 1] == 1 and H[2, 1] == 0
+
+    def test_real_dem_has_separators(self):
+        """Verify real surface code DEM contains ^ separators that must be handled."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+
+        # Count error instructions with ^ separators
+        separator_count = 0
+        for inst in dem.flattened():
+            if inst.type == "error":
+                targets = inst.targets_copy()
+                if any(t.is_separator() for t in targets):
+                    separator_count += 1
+
+        # Real surface code DEMs contain many ^ separators
+        assert separator_count > 0, (
+            "Expected real DEM to contain ^ separators. "
+            "If this fails, the test DEM generation may have changed."
+        )
+
+        # Verify H matrix is built correctly
+        H, priors, obs_flip = build_parity_check_matrix(dem)
+
+        # Number of columns should exceed number of error instructions
+        # because separators split instructions into multiple columns
+        n_instructions = sum(1 for inst in dem.flattened() if inst.type == "error")
+        assert H.shape[1] >= n_instructions, (
+            f"H has {H.shape[1]} columns but DEM has {n_instructions} error instructions. "
+            "With ^ separators, we expect more columns than instructions."
+        )

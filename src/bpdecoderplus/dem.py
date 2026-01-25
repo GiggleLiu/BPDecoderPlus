@@ -59,9 +59,70 @@ def load_dem(input_path: pathlib.Path) -> stim.DetectorErrorModel:
     return stim.DetectorErrorModel.from_file(str(input_path))
 
 
+def _split_error_by_separator(targets: list) -> list[dict]:
+    """
+    Split error targets by ^ separator into independent components.
+
+    CRITICAL: This function is required for correct BP+OSD decoding.
+
+    In DEM format, error(p) D0 D1 ^ D2 means a correlated fault that triggers
+    {D0, D1} AND {D2} simultaneously with probability p. These must be treated
+    as SEPARATE columns in the parity check matrix H, each with the same
+    probability p. Without this splitting:
+    - The parity check matrix H has wrong structure
+    - BP marginals are computed incorrectly
+    - Threshold analysis produces invalid results
+
+    Reference: PyMatching (https://github.com/oscarhiggott/PyMatching) uses
+    the same approach when parsing DEM files.
+
+    Args:
+        targets: List of stim.DemTarget from an error instruction.
+
+    Returns:
+        List of component dicts, each with 'detectors' and 'observables' lists.
+        Returns a list with one element if no separators are present.
+
+    Example:
+        For targets representing "D0 D1 ^ D2 L0":
+        Returns [{"detectors": [0, 1], "observables": []},
+                 {"detectors": [2], "observables": [0]}]
+    """
+    components = []
+    current_detectors = []
+    current_observables = []
+
+    for t in targets:
+        if t.is_separator():
+            # ^ separator found - finalize current component
+            if current_detectors or current_observables:
+                components.append({
+                    "detectors": current_detectors,
+                    "observables": current_observables,
+                })
+            current_detectors = []
+            current_observables = []
+        elif t.is_relative_detector_id():
+            current_detectors.append(t.val)
+        elif t.is_logical_observable_id():
+            current_observables.append(t.val)
+
+    # Don't forget the last component after final separator (or if no separator)
+    if current_detectors or current_observables:
+        components.append({
+            "detectors": current_detectors,
+            "observables": current_observables,
+        })
+
+    return components
+
+
 def dem_to_dict(dem: stim.DetectorErrorModel) -> dict[str, Any]:
     """
     Convert DEM to dictionary with structured information.
+
+    Handles ^ separators by splitting each error instruction into
+    separate components (see _split_error_by_separator).
 
     Args:
         dem: Detector Error Model to convert.
@@ -74,14 +135,14 @@ def dem_to_dict(dem: stim.DetectorErrorModel) -> dict[str, Any]:
         if inst.type == "error":
             prob = inst.args_copy()[0]
             targets = inst.targets_copy()
-            detectors = [t.val for t in targets if t.is_relative_detector_id()]
-            observables = [t.val for t in targets if t.is_logical_observable_id()]
 
-            errors.append({
-                "probability": float(prob),
-                "detectors": detectors,
-                "observables": observables,
-            })
+            # Split by ^ separator - each component becomes a separate error
+            for comp in _split_error_by_separator(targets):
+                errors.append({
+                    "probability": float(prob),
+                    "detectors": comp["detectors"],
+                    "observables": comp["observables"],
+                })
 
     return {
         "num_detectors": dem.num_detectors,
@@ -109,15 +170,25 @@ def save_dem_json(
 
 def build_parity_check_matrix(
     dem: stim.DetectorErrorModel,
+    split_by_separator: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build parity check matrix H from DEM for BP decoding.
 
-    Each error instruction in the flattened DEM becomes one column in H.
-    Stim's decompose_errors ensures each error has a unique detector pattern.
+    CRITICAL: By default, this function handles ^ separators in DEM error
+    instructions. Each component (separated by ^) becomes a SEPARATE column
+    in H with the same probability. This is required for correct BP decoding.
+
+    Example: error(0.01) D0 D1 ^ D2 creates TWO columns (when split_by_separator=True):
+    - Column 1: prob=0.01, detectors={0,1}, obs_flip=0
+    - Column 2: prob=0.01, detectors={2}, obs_flip=0
 
     Args:
         dem: Detector Error Model.
+        split_by_separator: If True (default), split error targets by ^ separator
+            into separate columns. If False, treat all targets in one error
+            instruction as a single column. Default True is required for correct
+            BP decoding on circuit-level noise models.
 
     Returns:
         Tuple of (H, priors, obs_flip) where:
@@ -130,13 +201,26 @@ def build_parity_check_matrix(
         if inst.type == "error":
             prob = inst.args_copy()[0]
             targets = inst.targets_copy()
-            detectors = [t.val for t in targets if t.is_relative_detector_id()]
-            observables = [t.val for t in targets if t.is_logical_observable_id()]
-            errors.append({
-                "prob": prob,
-                "detectors": detectors,
-                "observables": observables,
-            })
+
+            if split_by_separator:
+                # CRITICAL: Split by ^ separator - each component is a separate error
+                # Without this, the parity check matrix has wrong structure and
+                # BP decoding produces incorrect results.
+                for comp in _split_error_by_separator(targets):
+                    errors.append({
+                        "prob": prob,
+                        "detectors": comp["detectors"],
+                        "observables": comp["observables"],
+                    })
+            else:
+                # No splitting - treat all targets as single error (legacy behavior)
+                detectors = [t.val for t in targets if t.is_relative_detector_id()]
+                observables = [t.val for t in targets if t.is_logical_observable_id()]
+                errors.append({
+                    "prob": prob,
+                    "detectors": detectors,
+                    "observables": observables,
+                })
 
     n_detectors = dem.num_detectors
     n_errors = len(errors)
@@ -159,6 +243,8 @@ def dem_to_uai(dem: stim.DetectorErrorModel) -> str:
     """
     Convert DEM to UAI format for probabilistic inference.
 
+    Handles ^ separators by splitting each error into separate factors.
+
     Args:
         dem: Detector Error Model to convert.
 
@@ -170,8 +256,10 @@ def dem_to_uai(dem: stim.DetectorErrorModel) -> str:
         if inst.type == "error":
             prob = inst.args_copy()[0]
             targets = inst.targets_copy()
-            detectors = [t.val for t in targets if t.is_relative_detector_id()]
-            errors.append({"prob": prob, "detectors": detectors})
+
+            # Split by ^ separator - each component becomes a separate factor
+            for comp in _split_error_by_separator(targets):
+                errors.append({"prob": prob, "detectors": comp["detectors"]})
 
     n_detectors = dem.num_detectors
     lines = []
