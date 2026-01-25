@@ -454,6 +454,132 @@ def save_uai(dem: stim.DetectorErrorModel, output_path: pathlib.Path) -> None:
     output_path.write_text(dem_to_uai(dem))
 
 
+def build_parity_factor(n_vars: int, syndrome_bit: int) -> list[float]:
+    """
+    Build XOR parity constraint factor for MAP decoding.
+
+    Creates a factor that equals 1.0 when the parity of the input variables
+    matches the syndrome bit, and 1e-30 (near-zero) otherwise.
+
+    The near-zero value (instead of 0) avoids log(0) = -inf issues in
+    the tropical tensor network computation.
+
+    Args:
+        n_vars: Number of binary variables in this factor.
+        syndrome_bit: Target parity (0 or 1) from the syndrome.
+
+    Returns:
+        List of factor values with 2^n_vars entries.
+    """
+    n_entries = 2 ** n_vars
+    values = []
+    for i in range(n_entries):
+        parity = bin(i).count("1") % 2
+        # Factor = 1.0 if parity matches syndrome, else near-zero
+        if parity == syndrome_bit:
+            values.append(1.0)
+        else:
+            values.append(1e-30)
+    return values
+
+
+def dem_to_uai_for_decoding(
+    dem: stim.DetectorErrorModel,
+    syndrome: np.ndarray,
+) -> str:
+    """
+    Convert DEM + syndrome to UAI model for MAP error decoding.
+
+    Unlike dem_to_uai (where variables = detectors), this creates a model where:
+    - Variables = error/hyperedge bits (after separator split + hyperedge merge)
+    - Prior factors = error probabilities for each hyperedge
+    - Constraint factors = syndrome parity checks (hard constraints)
+
+    The resulting UAI model can be solved with tropical tensor network MPE
+    inference to find the most likely error pattern given the syndrome.
+
+    Args:
+        dem: Detector Error Model.
+        syndrome: Binary syndrome array of shape (num_detectors,).
+
+    Returns:
+        String in UAI format representing the decoding factor graph.
+    """
+    # Build parity check matrix with separator splitting and hyperedge merging
+    H, priors, obs_flip = build_parity_check_matrix(dem)
+
+    n_detectors, n_errors = H.shape
+
+    # Verify syndrome length
+    if len(syndrome) != n_detectors:
+        raise ValueError(
+            f"Syndrome length {len(syndrome)} does not match "
+            f"number of detectors {n_detectors}"
+        )
+
+    lines = []
+
+    # UAI header: MARKOV network type
+    lines.append("MARKOV")
+
+    # Number of variables = number of hyperedges (errors)
+    lines.append(str(n_errors))
+
+    # All variables are binary
+    lines.append(" ".join(["2"] * n_errors))
+
+    # Count factors: n_errors prior factors + n_detectors constraint factors
+    n_factors = n_errors + n_detectors
+    lines.append(str(n_factors))
+
+    # Factor scopes
+    # First: prior factors (each covers one error variable)
+    for i in range(n_errors):
+        lines.append(f"1 {i}")
+
+    # Second: constraint factors (each covers errors connected to a detector)
+    for d in range(n_detectors):
+        error_indices = np.where(H[d, :] == 1)[0]
+        n_vars = len(error_indices)
+        if n_vars > 0:
+            scope_str = " ".join(str(e) for e in error_indices)
+            lines.append(f"{n_vars} {scope_str}")
+        else:
+            # Detector with no connected errors - should not happen in valid DEM
+            # but handle gracefully with empty scope
+            lines.append("0")
+
+    lines.append("")
+
+    # Factor values
+    # Prior factors: P(e_i = 0) = 1 - p_i, P(e_i = 1) = p_i
+    for i in range(n_errors):
+        p = priors[i]
+        lines.append("2")
+        lines.append(str(1.0 - p))
+        lines.append(str(p))
+        lines.append("")
+
+    # Constraint factors: XOR parity check
+    for d in range(n_detectors):
+        error_indices = np.where(H[d, :] == 1)[0]
+        n_vars = len(error_indices)
+        if n_vars > 0:
+            syndrome_bit = int(syndrome[d])
+            factor_values = build_parity_factor(n_vars, syndrome_bit)
+            lines.append(str(len(factor_values)))
+            for v in factor_values:
+                lines.append(str(v))
+            lines.append("")
+        else:
+            # Empty factor for detector with no errors
+            lines.append("1")
+            lines.append("1.0")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
 def generate_dem_from_circuit(
     circuit_path: pathlib.Path,
     output_path: pathlib.Path | None = None,

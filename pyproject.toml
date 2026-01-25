@@ -27,6 +27,7 @@ dependencies = [
     "stim>=1.12.0",
     "numpy>=1.24.0",
     "torch>=2.0.0",
+    "omeco>=0.2.1",
 ]
 
 [project.urls]

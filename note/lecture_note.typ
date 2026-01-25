@@ -1608,13 +1608,6 @@ stroke: 0.5pt,
 caption: [Mapping OSD-CS theory to `batch_osd.py` implementation]
 )
 
-#pagebreak()
-
-
-= The Complete BP+OSD Decoder
-
-== Algorithm Flow
-
 #figure(
   canvas(length: 1cm, {
     import draw: *
@@ -1661,72 +1654,421 @@ caption: [Mapping OSD-CS theory to `batch_osd.py` implementation]
   - If BP fails: use OSD to resolve degeneracy — always gives valid answer
 ]
 
+
 #pagebreak()
 
-== Complete Algorithm: BP+OSD-CS
+= Quantum Error Correction Basics
+
+== Qubits and Quantum States
+
+#definition[
+  A *qubit* is a quantum two-level system. Its state is written using *ket notation*:
+  $ |psi〉 = alpha |0〉 + beta |1〉 $
+
+  where:
+  - $|0〉 = mat(1; 0)$ and $|1〉 = mat(0; 1)$ are the *computational basis states*
+  - $alpha, beta$ are complex numbers with $|alpha|^2 + |beta|^2 = 1$
+  - The ket symbol $|dot〉$ is standard notation for quantum states
+]
+
+Common quantum states include:
+- $|0〉, |1〉$ = computational basis
+- $|+〉 = 1/sqrt(2)(|0〉 + |1〉)$ = superposition (plus state)
+- $|-〉 = 1/sqrt(2)(|0〉 - |1〉)$ = superposition (minus state)
+
+== Pauli Operators
+
+#definition[
+  The *Pauli operators* are the fundamental single-qubit error operations:
+
+  #figure(
+    table(
+      columns: 4,
+      align: center,
+      [*Symbol*], [*Matrix*], [*Binary repr.*], [*Effect on states*],
+      [$bb(1)$ (Identity)], [$mat(1,0;0,1)$], [$(0,0)$], [No change],
+      [$X$ (bit flip)], [$mat(0,1;1,0)$], [$(1,0)$], [$|0〉 arrow.l.r |1〉$],
+      [$Z$ (phase flip)], [$mat(1,0;0,-1)$], [$(0,1)$], [$|+〉 arrow.l.r |-〉$],
+      [$Y = i X Z$], [$mat(0,-i;i,0)$], [$(1,1)$], [Both flips],
+    ),
+    caption: [Pauli operators]
+  )
+]
+
+#keypoint[
+  Quantum errors are modeled as random Pauli operators:
+  - *X errors* = bit flips (like classical errors)
+  - *Z errors* = phase flips (uniquely quantum, no classical analogue)
+  - *Y errors* = both (can be written as $Y = i X Z$)
+]
+
+#pagebreak()
+
+== Binary Representation of Pauli Errors
+
+#definition[
+  An $n$-qubit Pauli error $E$ can be written in *binary representation*:
+  $ E arrow.r.bar bold(e)_Q = (bold(x), bold(z)) $
+
+  where:
+  - $bold(x) = (x_1, ..., x_n)$ indicates X components ($x_j = 1$ means X error on qubit $j$)
+  - $bold(z) = (z_1, ..., z_n)$ indicates Z components ($z_j = 1$ means Z error on qubit $j$)
+]
+
+For example, the error $E = X_1 Z_3$ on 3 qubits (X on qubit 1, Z on qubit 3) has binary representation:
+$ bold(e)_Q = (bold(x), bold(z)) = ((1,0,0), (0,0,1)) $
+
+== CSS Codes
+
+#definition[
+  A *CSS code* (Calderbank-Shor-Steane code) is a quantum error-correcting code with a structure that allows X and Z errors to be corrected independently.
+
+  A CSS code is defined by two classical parity check matrices $H_X$ and $H_Z$ satisfying:
+  $ H_X dot H_Z^T = bold(0) quad ("orthogonality constraint") $
+
+  The combined quantum parity check matrix is:
+  $ H_"CSS" = mat(H_Z, bold(0); bold(0), H_X) $
+]
+
+#keypoint[
+  The orthogonality constraint $H_X dot H_Z^T = bold(0)$ ensures that the quantum stabilizers *commute* (a necessary condition for valid quantum codes).
+]
+
+#pagebreak()
+
+== Syndrome Measurement in CSS Codes
+
+For a CSS code with error $E arrow.r.bar bold(e)_Q = (bold(x), bold(z))$:
+
+#definition[
+  The *quantum syndrome* is:
+  $ bold(s)_Q = (bold(s)_x, bold(s)_z) = (H_Z dot bold(x), H_X dot bold(z)) $
+
+  - $bold(s)_x = H_Z dot bold(x)$ detects X (bit-flip) errors
+  - $bold(s)_z = H_X dot bold(z)$ detects Z (phase-flip) errors
+]
 
 #figure(
-  align(left)[
-    #box(
-      width: 100%,
-      stroke: 1pt,
-      inset: 12pt,
-      radius: 4pt,
-      fill: luma(250),
-      [
-        #text(weight: "bold", size: 10pt)[Algorithm 3: BP+OSD-CS Decoder]
-        #v(0.5em)
-        #text(size: 8.5pt)[
-          ```
-          Input: Parity matrix H (m×n, rank r), syndrome s, error prob p, depth λ=60
-          Output: Error estimate e satisfying H·e = s
+  canvas(length: 1cm, {
+    import draw: *
 
-          function BP_OSD_CS(H, s, p, λ):
-              // ===== STAGE 1: Run Belief Propagation (Algorithm 1) =====
-              (converged, e_BP, P_1) = BP(H, s, p)
-              if converged:
-                  return e_BP
+    // X-error decoding
+    rect((-4, 0.8), (-0.5, 2), fill: rgb("#e8f4e8"), name: "xbox")
+    content((-2.25, 1.6), [X-error decoding])
+    content((-2.25, 1.1), text(size: 9pt)[$H_Z dot bold(x) = bold(s)_x$])
 
-              // ===== STAGE 2: OSD-0 (Algorithm 2) =====
-              [O_BP] = argsort(P_1)              // Sort: most likely flipped first
-              H_sorted = H[:, O_BP]              // Reorder columns
-              [S] = first r linearly independent columns of H_sorted
-              [T] = remaining k' = n - r columns
+    // Z-error decoding
+    rect((0.5, 0.8), (4, 2), fill: rgb("#e8e8f4"), name: "zbox")
+    content((2.25, 1.6), [Z-error decoding])
+    content((2.25, 1.1), text(size: 9pt)[$H_X dot bold(z) = bold(s)_z$])
 
-              e_[S] = H_[S]^(-1) × s             // Solve on basis
-              e_[T] = zeros(k')                  // Set remainder to zero
-              best = (e_[S], e_[T])
-              best_wt = hamming_weight(best)
-
-              // ===== STAGE 3: Combination Sweep =====
-              // Weight-1 search: try flipping each remainder bit
-              for i = 0 to k'-1:
-                  e_[T] = zeros(k');  e_[T][i] = 1
-                  e_[S] = H_[S]^(-1) × (s + H_[T] × e_[T])
-                  if hamming_weight((e_[S], e_[T])) < best_wt:
-                      best = (e_[S], e_[T])
-                      best_wt = hamming_weight(best)
-
-              // Weight-2 search: try flipping pairs in first λ bits
-              for i = 0 to min(λ, k')-1:
-                  for j = i+1 to min(λ, k')-1:
-                      e_[T] = zeros(k');  e_[T][i] = 1;  e_[T][j] = 1
-                      e_[S] = H_[S]^(-1) × (s + H_[T] × e_[T])
-                      if hamming_weight((e_[S], e_[T])) < best_wt:
-                          best = (e_[S], e_[T])
-                          best_wt = hamming_weight(best)
-
-              return inverse_permute(best, O_BP)  // Remap to original ordering
-          ```
-        ]
-      ]
-    )
-  ],
-  caption: [Complete BP+OSD-CS algorithm]
+    // Label
+    content((0, 0.2), text(size: 9pt)[Two independent classical problems!])
+  }),
+  caption: [CSS codes allow independent X and Z decoding]
 )
+
+#keypoint[
+  CSS codes allow *independent decoding*:
+  - Decode X errors using matrix $H_Z$ and syndrome $bold(s)_x$
+  - Decode Z errors using matrix $H_X$ and syndrome $bold(s)_z$
+
+  Each is a classical syndrome decoding problem — so BP can be applied!
+]
+
+== Quantum Code Parameters
+
+Quantum codes use double-bracket notation $[[n, k, d]]$:
+- $n$ = number of physical qubits
+- $k$ = number of logical qubits encoded
+- $d$ = code distance (minimum weight of undetectable errors)
+
+Compare to classical $[n, k, d]$ notation (single brackets).
+
+#definition[
+  A *quantum LDPC (QLDPC) code* is a CSS code where $H_"CSS"$ is sparse.
+
+  An *$(l_Q, q_Q)$-QLDPC code* has:
+  - Each column of $H_"CSS"$ has at most $l_Q$ ones
+  - Each row of $H_"CSS"$ has at most $q_Q$ ones
+]
 
 #pagebreak()
 
+== The Hypergraph Product Construction
+
+#definition[
+  The *hypergraph product* constructs a quantum CSS code from a classical code.
+
+  Given classical code with $m times n$ parity check matrix $H$:
+
+  $ H_X = mat(H times.o bb(1)_n, bb(1)_m times.o H^T) $
+  $ H_Z = mat(bb(1)_n times.o H, H^T times.o bb(1)_m) $
+
+  Where:
+  - $times.o$ = *Kronecker product* (tensor product of matrices)
+  - $bb(1)_n$ = $n times n$ identity matrix
+  - $H^T$ = transpose of $H$
+]
+
+A well-known example is the *Toric Code*, which is the hypergraph product of the ring code (cyclic repetition code). From a classical $[n, 1, n]$ ring code, we obtain a quantum $[[2n^2, 2, n]]$ Toric code. Its properties include:
+- $(4, 4)$-QLDPC: each stabilizer involves at most 4 qubits
+- High threshold (~10.3% with optimal decoder)
+- Rate $R = 2/(2n^2) arrow.r 0$ as $n arrow.r infinity$
+
+#pagebreak()
+
+== Manifest of BP+OSD threshold analysis
+In this section, we implement the BP+OSD decoder on the rotated surface code datasets. The end-to-end workflow consists of three stages: (1) generating detector error models from noisy circuits, (2) building the parity check matrix with hyperedge merging, and (3) estimating logical error rates using soft XOR probability chains.
+
+=== Step 1: Generating Rotated Surface Code DEM Files
+
+The first step is to generate a *Detector Error Model (DEM)* from a noisy quantum circuit using *Stim*. The DEM captures the probabilistic relationship between physical errors and syndrome patterns.
+
+#definition[
+  A *Detector Error Model (DEM)* is a list of *error mechanisms*, each specifying a probability $p$ of occurrence, a set of *detectors* (syndrome bits) that flip when the error occurs, and optionally, *logical observables* that flip when the error occurs.
+]
+
+We use Stim's built-in circuit generator to create rotated surface code memory experiments with circuit-level depolarizing noise:
+
+```python
+import stim
+
+circuit = stim.Circuit.generated(
+    "surface_code:rotated_memory_z",
+    distance=d,        # Code distance
+    rounds=r,          # Number of syndrome measurement rounds
+    after_clifford_depolarization=p,      # Noise after gates
+    before_round_data_depolarization=p,   # Noise on idle qubits
+    before_measure_flip_probability=p,    # Measurement errors
+    after_reset_flip_probability=p,       # Reset errors
+)
+
+# Extract DEM from circuit
+dem = circuit.detector_error_model(decompose_errors=True)
+```
+
+The DEM output uses a compact text format. Key elements include:
+
+#figure(
+  table(
+    columns: (auto, auto),
+    align: (left, left),
+    stroke: 0.5pt,
+    inset: 8pt,
+    [*Syntax*], [*Meaning*],
+    [`error(0.01) D0 D1`], [Error with $p=0.01$ that triggers detectors $D_0$ and $D_1$],
+    [`error(0.01) D0 D1 ^ D2`], [*Correlated error*: triggers ${D_0, D_1}$ AND ${D_2}$ simultaneously],
+    [`error(0.01) D0 L0`], [Error that triggers $D_0$ and flips logical observable $L_0$],
+    [`detector D0`], [Declares detector $D_0$ (syndrome bit)],
+    [`logical_observable L0`], [Declares logical observable $L_0$],
+  ),
+  caption: [DEM syntax elements. The `^` separator indicates correlated fault mechanisms.]
+)
+
+#keypoint[
+  The `^` *separator* is critical for correct decoding. In `error(p) D0 D1 ^ D2`, the fault triggers *both* patterns ${D_0, D_1}$ and ${D_2}$ simultaneously with probability $p$. These must be treated as separate columns in the parity check matrix $H$, each with the same probability $p$.
+]
+
+=== Step 2: Building the Parity Check Matrix $H$
+
+Converting the DEM to a parity check matrix $H$ for BP decoding requires two critical processing stages.
+
+==== Stage 1: Separator Splitting
+
+DEM errors with `^` separators represent correlated faults that trigger multiple detector patterns simultaneously. These must be split into *separate columns* in $H$:
+
+#keypoint[
+  *Example:* Consider `error(0.01) D0 D1 ^ D2 L0`. This splits into two components:
+  - Component 1: detectors $= {D_0, D_1}$, observables $= {}$, probability $= 0.01$
+  - Component 2: detectors $= {D_2}$, observables $= {L_0}$, probability $= 0.01$
+  
+  Each component becomes a *separate column* in the $H$ matrix with the same probability.
+]
+
+The splitting algorithm (from `_split_error_by_separator`):
+
+```python
+def _split_error_by_separator(targets):
+    components = []
+    current_detectors, current_observables = [], []
+    
+    for t in targets:
+        if t.is_separator():  # ^ found
+            components.append({
+                "detectors": current_detectors,
+                "observables": current_observables
+            })
+            current_detectors, current_observables = [], []
+        elif t.is_relative_detector_id():
+            current_detectors.append(t.val)
+        elif t.is_logical_observable_id():
+            current_observables.append(t.val)
+    
+    # Don't forget the last component
+    components.append({"detectors": current_detectors, 
+                       "observables": current_observables})
+    return components
+```
+
+==== Stage 2: Hyperedge Merging
+
+After splitting, errors with *identical detector patterns* are merged into single *hyperedges*. This is essential because:
+1. Errors with identical syndromes are *indistinguishable* to the decoder
+2. Detectors are XOR-based: two errors triggering the same detector cancel out
+3. Merging reduces the factor graph size and improves threshold performance
+
+#definition[
+  *Hyperedge Merging:* When two error mechanisms have identical detector patterns, their probabilities are combined using the *XOR formula*:
+  $ p_"combined" = p_1 + p_2 - 2 p_1 p_2 $
+  
+  This formula computes $P("odd number of errors fire") = P(A xor B)$.
+]
+
+#proof[
+  For independent errors $A$ and $B$:
+  $ P(A xor B) &= P(A) dot (1 - P(B)) + P(B) dot (1 - P(A)) \
+               &= P(A) + P(B) - 2 P(A) P(B) $
+  
+  This is exactly the probability that an *odd* number of the two errors occurs, which determines the net syndrome flip (since two flips cancel).
+]
+
+For observable flip tracking, we compute the *conditional probability* $P("obs flip" | "hyperedge fires")$:
+
+```python
+# When merging error with probability prob into existing hyperedge:
+if has_obs_flip:
+    # New error flips observable: XOR with existing flip probability
+    obs_prob_new = obs_prob_old * (1 - prob) + prob * (1 - obs_prob_old)
+else:
+    # New error doesn't flip observable
+    obs_prob_new = obs_prob_old * (1 - prob)
+
+# Store conditional probability: P(obs flip | hyperedge fires)
+obs_flip[j] = obs_prob / p_combined
+```
+
+#figure(
+  table(
+    columns: (auto, auto, auto),
+    align: (center, center, center),
+    stroke: 0.5pt,
+    inset: 8pt,
+    [*Mode*], [*$H$ Columns (d=3)*], [*Description*],
+    [No split, no merge], [$tilde 286$], [Raw DEM errors as columns],
+    [Split only], [$tilde 556$], [After `^` separator splitting],
+    [Split + merge (optimal)], [$tilde 400$], [After hyperedge merging],
+  ),
+  caption: [Effect of separator splitting and hyperedge merging on $H$ matrix size for $d=3$ rotated surface code. The split+merge approach provides the optimal balance.]
+)
+
+The final output is a tuple $(H, "priors", "obs_flip")$ where:
+- $H$: Parity check matrix of shape $("num_detectors", "num_hyperedges")$
+- $"priors"$: Prior error probabilities per hyperedge
+- $"obs_flip"$: Observable flip probabilities $P("obs flip" | "hyperedge fires")$
+
+=== Step 3: Estimating Logical Error Rate
+
+With the parity check matrix $H$ constructed, we can now decode syndrome samples and estimate the logical error rate.
+
+==== Decoding Pipeline
+
+The BP+OSD decoding pipeline consists of three stages:
+
+#figure(
+  canvas(length: 1cm, {
+    import draw: *
+    
+    // Boxes
+    rect((0, 0), (3, 1.5), name: "bp")
+    content("bp", [*BP Decoder*\ Marginal $P(e_j | bold(s))$])
+    
+    rect((4.5, 0), (7.5, 1.5), name: "osd")
+    content("osd", [*OSD Post-Process*\ Hard solution $hat(bold(e))$])
+    
+    rect((9, 0), (12, 1.5), name: "xor")
+    content("xor", [*XOR Chain*\ Predict $hat(L)$])
+    
+    // Arrows
+    line((3, 0.75), (4.5, 0.75), mark: (end: ">"))
+    line((7.5, 0.75), (9, 0.75), mark: (end: ">"))
+    
+    // Input/Output labels
+    content((1.5, 2), [Syndrome $bold(s)$])
+    line((1.5, 1.8), (1.5, 1.5), mark: (end: ">"))
+    
+    content((10.5, -0.7), [Prediction $hat(L) in {0, 1}$])
+    line((10.5, -0.5), (10.5, 0), mark: (start: ">"))
+  }),
+  caption: [BP+OSD decoding pipeline: BP computes soft marginals, OSD finds a hard solution, XOR chain predicts observable.]
+)
+
+1. *BP Decoding*: Given syndrome $bold(s)$, run belief propagation on the factor graph to compute marginal probabilities $P(e_j = 1 | bold(s))$ for each hyperedge $j$.
+
+2. *OSD Post-Processing*: Use Ordered Statistics Decoding to find a hard solution $hat(bold(e))$ satisfying $H hat(bold(e)) = bold(s)$, ordered by BP marginals.
+
+3. *XOR Probability Chain*: Compute the predicted observable value using soft probabilities.
+
+==== XOR Probability Chain for Observable Prediction
+
+The key insight is that observable prediction must account for the *soft* flip probabilities stored in `obs_flip`. When hyperedges are merged, `obs_flip[j]` contains $P("obs flip" | "hyperedge " j " fires")$, not a binary indicator.
+
+#theorem("XOR Probability Chain")[
+  Given a solution $hat(bold(e))$ and observable flip probabilities $"obs_flip"$, the probability of an odd number of observable flips is computed iteratively:
+  $ P_"flip" = P_"flip" dot (1 - "obs_flip"[j]) + "obs_flip"[j] dot (1 - P_"flip") $
+  for each $j$ where $hat(e)_j = 1$. The predicted observable is $hat(L) = bb(1)[P_"flip" > 0.5]$.
+]
+
+The implementation:
+
+```python
+def compute_observable_predictions_batch(solutions, obs_flip):
+    batch_size = solutions.shape[0]
+    predictions = np.zeros(batch_size, dtype=int)
+    
+    for b in range(batch_size):
+        p_flip = 0.0
+        for i in np.where(solutions[b] == 1)[0]:
+            # XOR probability: P(A XOR B) = P(A)(1-P(B)) + P(B)(1-P(A))
+            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+        predictions[b] = int(p_flip > 0.5)
+    
+    return predictions
+```
+
+#keypoint[
+  If `merge_hyperedges=False`, then `obs_flip` contains binary values ${0, 1}$, and the XOR chain reduces to simple parity: $hat(L) = sum_j hat(e)_j dot "obs_flip"[j] mod 2$.
+]
+
+==== Logical Error Rate Estimation
+
+The logical error rate (LER) is estimated by comparing predictions to ground truth:
+
+$ "LER" = 1/N sum_(i=1)^N bb(1)[hat(L)^((i)) eq.not L^((i))] $
+
+where $N$ is the number of syndrome samples, $hat(L)^((i))$ is the predicted observable for sample $i$, and $L^((i))$ is the ground truth.
+
+==== Threshold Analysis
+
+The *threshold* $p_"th"$ is the physical error rate below which increasing code distance reduces the logical error rate. For rotated surface codes with circuit-level depolarizing noise, the threshold is approximately *0.7%* (Bravyi et al., Nature 2024).
+
+#figure(
+  table(
+    columns: (auto, auto, auto, auto),
+    align: (center, center, center, center),
+    stroke: 0.5pt,
+    inset: 8pt,
+    [*Distance*], [*$p = 0.005$*], [*$p = 0.007$*], [*$p = 0.009$*],
+    [$d = 3$], [$tilde 0.03$], [$tilde 0.06$], [$tilde 0.10$],
+    [$d = 5$], [$tilde 0.01$], [$tilde 0.04$], [$tilde 0.09$],
+    [$d = 7$], [$tilde 0.005$], [$tilde 0.03$], [$tilde 0.08$],
+  ),
+  caption: [Example logical error rates for BP+OSD decoder. Below threshold ($p < 0.007$), larger distances achieve lower LER. Above threshold, the trend reverses.]
+)
+
+At the threshold, curves for different distances *cross*: below threshold, larger $d$ gives lower LER; above threshold, larger $d$ gives *higher* LER due to more opportunities for errors to accumulate.
+
+#pagebreak()
 
 == BP Convergence and Performance Guarantees
 
@@ -2338,166 +2680,6 @@ The Blossom algorithm, developed by Edmonds (1965), solves MWPM by maintaining p
 
 #pagebreak()
 
-= Quantum Error Correction Basics
-
-== Qubits and Quantum States
-
-#definition[
-  A *qubit* is a quantum two-level system. Its state is written using *ket notation*:
-  $ |psi〉 = alpha |0〉 + beta |1〉 $
-
-  where:
-  - $|0〉 = mat(1; 0)$ and $|1〉 = mat(0; 1)$ are the *computational basis states*
-  - $alpha, beta$ are complex numbers with $|alpha|^2 + |beta|^2 = 1$
-  - The ket symbol $|dot〉$ is standard notation for quantum states
-]
-
-Common quantum states include:
-- $|0〉, |1〉$ = computational basis
-- $|+〉 = 1/sqrt(2)(|0〉 + |1〉)$ = superposition (plus state)
-- $|-〉 = 1/sqrt(2)(|0〉 - |1〉)$ = superposition (minus state)
-
-== Pauli Operators
-
-#definition[
-  The *Pauli operators* are the fundamental single-qubit error operations:
-
-  #figure(
-    table(
-      columns: 4,
-      align: center,
-      [*Symbol*], [*Matrix*], [*Binary repr.*], [*Effect on states*],
-      [$bb(1)$ (Identity)], [$mat(1,0;0,1)$], [$(0,0)$], [No change],
-      [$X$ (bit flip)], [$mat(0,1;1,0)$], [$(1,0)$], [$|0〉 arrow.l.r |1〉$],
-      [$Z$ (phase flip)], [$mat(1,0;0,-1)$], [$(0,1)$], [$|+〉 arrow.l.r |-〉$],
-      [$Y = i X Z$], [$mat(0,-i;i,0)$], [$(1,1)$], [Both flips],
-    ),
-    caption: [Pauli operators]
-  )
-]
-
-#keypoint[
-  Quantum errors are modeled as random Pauli operators:
-  - *X errors* = bit flips (like classical errors)
-  - *Z errors* = phase flips (uniquely quantum, no classical analogue)
-  - *Y errors* = both (can be written as $Y = i X Z$)
-]
-
-#pagebreak()
-
-== Binary Representation of Pauli Errors
-
-#definition[
-  An $n$-qubit Pauli error $E$ can be written in *binary representation*:
-  $ E arrow.r.bar bold(e)_Q = (bold(x), bold(z)) $
-
-  where:
-  - $bold(x) = (x_1, ..., x_n)$ indicates X components ($x_j = 1$ means X error on qubit $j$)
-  - $bold(z) = (z_1, ..., z_n)$ indicates Z components ($z_j = 1$ means Z error on qubit $j$)
-]
-
-For example, the error $E = X_1 Z_3$ on 3 qubits (X on qubit 1, Z on qubit 3) has binary representation:
-$ bold(e)_Q = (bold(x), bold(z)) = ((1,0,0), (0,0,1)) $
-
-== CSS Codes
-
-#definition[
-  A *CSS code* (Calderbank-Shor-Steane code) is a quantum error-correcting code with a structure that allows X and Z errors to be corrected independently.
-
-  A CSS code is defined by two classical parity check matrices $H_X$ and $H_Z$ satisfying:
-  $ H_X dot H_Z^T = bold(0) quad ("orthogonality constraint") $
-
-  The combined quantum parity check matrix is:
-  $ H_"CSS" = mat(H_Z, bold(0); bold(0), H_X) $
-]
-
-#keypoint[
-  The orthogonality constraint $H_X dot H_Z^T = bold(0)$ ensures that the quantum stabilizers *commute* (a necessary condition for valid quantum codes).
-]
-
-#pagebreak()
-
-== Syndrome Measurement in CSS Codes
-
-For a CSS code with error $E arrow.r.bar bold(e)_Q = (bold(x), bold(z))$:
-
-#definition[
-  The *quantum syndrome* is:
-  $ bold(s)_Q = (bold(s)_x, bold(s)_z) = (H_Z dot bold(x), H_X dot bold(z)) $
-
-  - $bold(s)_x = H_Z dot bold(x)$ detects X (bit-flip) errors
-  - $bold(s)_z = H_X dot bold(z)$ detects Z (phase-flip) errors
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // X-error decoding
-    rect((-4, 0.8), (-0.5, 2), fill: rgb("#e8f4e8"), name: "xbox")
-    content((-2.25, 1.6), [X-error decoding])
-    content((-2.25, 1.1), text(size: 9pt)[$H_Z dot bold(x) = bold(s)_x$])
-
-    // Z-error decoding
-    rect((0.5, 0.8), (4, 2), fill: rgb("#e8e8f4"), name: "zbox")
-    content((2.25, 1.6), [Z-error decoding])
-    content((2.25, 1.1), text(size: 9pt)[$H_X dot bold(z) = bold(s)_z$])
-
-    // Label
-    content((0, 0.2), text(size: 9pt)[Two independent classical problems!])
-  }),
-  caption: [CSS codes allow independent X and Z decoding]
-)
-
-#keypoint[
-  CSS codes allow *independent decoding*:
-  - Decode X errors using matrix $H_Z$ and syndrome $bold(s)_x$
-  - Decode Z errors using matrix $H_X$ and syndrome $bold(s)_z$
-
-  Each is a classical syndrome decoding problem — so BP can be applied!
-]
-
-== Quantum Code Parameters
-
-Quantum codes use double-bracket notation $[[n, k, d]]$:
-- $n$ = number of physical qubits
-- $k$ = number of logical qubits encoded
-- $d$ = code distance (minimum weight of undetectable errors)
-
-Compare to classical $[n, k, d]$ notation (single brackets).
-
-#definition[
-  A *quantum LDPC (QLDPC) code* is a CSS code where $H_"CSS"$ is sparse.
-
-  An *$(l_Q, q_Q)$-QLDPC code* has:
-  - Each column of $H_"CSS"$ has at most $l_Q$ ones
-  - Each row of $H_"CSS"$ has at most $q_Q$ ones
-]
-
-#pagebreak()
-
-== The Hypergraph Product Construction
-
-#definition[
-  The *hypergraph product* constructs a quantum CSS code from a classical code.
-
-  Given classical code with $m times n$ parity check matrix $H$:
-
-  $ H_X = mat(H times.o bb(1)_n, bb(1)_m times.o H^T) $
-  $ H_Z = mat(bb(1)_n times.o H, H^T times.o bb(1)_m) $
-
-  Where:
-  - $times.o$ = *Kronecker product* (tensor product of matrices)
-  - $bb(1)_n$ = $n times n$ identity matrix
-  - $H^T$ = transpose of $H$
-]
-
-A well-known example is the *Toric Code*, which is the hypergraph product of the ring code (cyclic repetition code). From a classical $[n, 1, n]$ ring code, we obtain a quantum $[[2n^2, 2, n]]$ Toric code. Its properties include:
-- $(4, 4)$-QLDPC: each stabilizer involves at most 4 qubits
-- High threshold (~10.3% with optimal decoder)
-- Rate $R = 2/(2n^2) arrow.r 0$ as $n arrow.r infinity$
-
-#pagebreak()
 = Results and Performance
 
 == Error Threshold
@@ -2555,6 +2737,364 @@ A well-known example is the *Toric Code*, which is the hypergraph product of the
   ),
   caption: [Complexity analysis]
 )
+
+#pagebreak()
+
+= Tropical Tensor Network
+
+In this section, we introduce a complementary approach to decoding: *tropical tensor networks*. While BP+OSD performs approximate inference followed by algebraic post-processing, tropical tensor networks provide a framework for *exact* maximum a posteriori (MAP) inference by reformulating the problem in terms of tropical algebra.
+
+The key insight is that finding the most probable error configuration corresponds to an optimization problem that can be solved exactly using tensor network contractions in the tropical semiring. This approach is particularly powerful for structured codes where the underlying factor graph has bounded treewidth.
+
+== Tropical Semiring
+
+#definition[
+  The *tropical semiring* (also called the *max-plus algebra*) is the algebraic structure $(RR union {-infinity}, plus.circle, times.circle)$ where:
+  - *Tropical addition*: $a plus.circle b = max(a, b)$
+  - *Tropical multiplication*: $a times.circle b = a + b$ (ordinary addition)
+  - *Additive identity*: $-infinity$ (since $max(a, -infinity) = a$)
+  - *Multiplicative identity*: $0$ (since $a + 0 = a$)
+]
+
+#keypoint[
+  The tropical semiring satisfies all semiring axioms:
+  - Associativity: $(a plus.circle b) plus.circle c = a plus.circle (b plus.circle c)$
+  - Commutativity: $a plus.circle b = b plus.circle a$
+  - Distributivity: $a times.circle (b plus.circle c) = (a times.circle b) plus.circle (a times.circle c)$
+
+  This algebraic structure allows us to replace standard summation with maximization while preserving the correctness of tensor contractions.
+]
+
+The tropical semiring was first systematically studied in the context of automata theory and formal languages @pin1998tropical. Its connection to optimization problems makes it particularly useful for decoding applications.
+
+#figure(
+  canvas({
+    import draw: *
+
+    // Standard vs Tropical comparison
+    set-style(stroke: 0.8pt)
+
+    // Left box: Standard algebra
+    rect((-4.5, -1.5), (-0.5, 1.5), stroke: blue, radius: 4pt, fill: rgb("#f0f7ff"))
+    content((-2.5, 1.1), text(weight: "bold", size: 9pt)[Standard Algebra])
+    content((-2.5, 0.4), text(size: 8pt)[$a + b = "sum"$])
+    content((-2.5, -0.1), text(size: 8pt)[$a times b = "product"$])
+    content((-2.5, -0.7), text(size: 8pt)[Used for: Marginals])
+
+    // Right box: Tropical algebra
+    rect((0.5, -1.5), (4.5, 1.5), stroke: orange, radius: 4pt, fill: rgb("#fffaf0"))
+    content((2.5, 1.1), text(weight: "bold", size: 9pt)[Tropical Algebra])
+    content((2.5, 0.4), text(size: 8pt)[$a plus.circle b = max(a, b)$])
+    content((2.5, -0.1), text(size: 8pt)[$a times.circle b = a + b$])
+    content((2.5, -0.7), text(size: 8pt)[Used for: MAP/MPE])
+
+    // Arrow
+    line((-0.3, 0), (0.3, 0), stroke: 1.5pt, mark: (end: ">"))
+  }),
+  caption: [Standard algebra vs tropical algebra: switching the algebraic structure transforms marginalization into optimization]
+)
+
+== From Probabilistic Inference to Tropical Algebra
+
+Recall that the MAP (Maximum A Posteriori) decoding problem seeks:
+$ bold(e)^* = arg max_(bold(e) : H bold(e) = bold(s)) P(bold(e)) $
+
+For independent bit-flip errors with probability $p$, the probability factors as:
+$ P(bold(e)) = product_(i=1)^n P(e_i) = product_(i=1)^n p^(e_i) (1-p)^(1-e_i) $
+
+Taking the logarithm transforms products into sums:
+$ log P(bold(e)) = sum_(i=1)^n log P(e_i) = sum_(i=1)^n [e_i log p + (1-e_i) log(1-p)] $
+
+#keypoint[
+  In the log-probability domain:
+  - *Products become sums*: $log(P dot Q) = log P + log Q$
+  - *Maximization is preserved*: $arg max_x f(x) = arg max_x log f(x)$
+
+  This means finding the MAP estimate for a function $product_f phi_f (bold(e)_f)$ is equivalent to:
+  $ bold(e)^* = arg max_(bold(e) : H bold(e) = bold(s)) sum_f log phi_f (bold(e)_f) $
+  where each factor $phi_f$ contributes additively in log-space.
+]
+
+The connection to tropical algebra becomes clear: if we replace standard tensor contractions (sum over products) with tropical contractions (max over sums), we transform marginal probability computation into MAP computation @pearl1988probabilistic.
+
+#figure(
+  table(
+    columns: 3,
+    align: (left, center, center),
+    stroke: 0.5pt,
+    [*Operation*], [*Standard (Marginals)*], [*Tropical (MAP)*],
+    [Combine factors], [$phi_a dot phi_b$], [$log phi_a + log phi_b$],
+    [Eliminate variable], [$sum_x$], [$max_x$],
+    [Result], [Partition function $Z$], [Max log-probability],
+  ),
+  caption: [Correspondence between standard and tropical tensor operations]
+)
+
+== Tensor Network Representation
+
+A tensor network represents the factorized probability dis
+tribution as a graph where nodes of tensors correspond to factors $phi_f$ and the edges of  correspond to functions that contract the variables.
+
+#definition[
+  Given a factor graph with factors ${phi_f}$ and variables ${x_i}$, the corresponding *tensor network* consists of:
+  - A tensor $T_f$ for each factor, with indices corresponding to the variables in $phi_f$
+  - The *contraction* of the network computes: $sum_(x_1, ..., x_n) product_f T_f (bold(x)_f)$
+
+  In the tropical semiring, this becomes: $max_(x_1, ..., x_n) sum_f T_f (bold(x)_f)$
+]
+
+The efficiency of tensor network contraction depends critically on the *contraction order*---the sequence in which variables are eliminated.
+
+#keypoint[
+  The *treewidth* of the factor graph determines the computational complexity:
+  - A contraction order exists with complexity $O(n dot d^(w+1))$ where $w$ is the treewidth
+  - For sparse graphs (like LDPC codes), treewidth can be small, enabling efficient exact inference
+  - Tools like `omeco` find near-optimal contraction orders using greedy heuristics
+]
+
+#figure(
+  canvas({
+    import draw: *
+
+    // Factor graph to tensor network illustration
+    set-style(stroke: 0.8pt)
+
+    // Title
+    content((0, 2.3), text(weight: "bold", size: 9pt)[Factor Graph → Tensor Network])
+
+    // Factor graph (left side)
+    // Variable nodes
+    circle((-3, 1), radius: 0.25, fill: white, name: "x1")
+    content("x1", text(size: 7pt)[$x_1$])
+    circle((-2, 1), radius: 0.25, fill: white, name: "x2")
+    content("x2", text(size: 7pt)[$x_2$])
+    circle((-1, 1), radius: 0.25, fill: white, name: "x3")
+    content("x3", text(size: 7pt)[$x_3$])
+
+    // Factor nodes
+    rect((-3.2, -0.2), (-2.8, 0.2), fill: rgb("#e0e0e0"), name: "f1")
+    content("f1", text(size: 6pt)[$phi_1$])
+    rect((-2.2, -0.2), (-1.8, 0.2), fill: rgb("#e0e0e0"), name: "f2")
+    content("f2", text(size: 6pt)[$phi_2$])
+    rect((-1.2, -0.2), (-0.8, 0.2), fill: rgb("#e0e0e0"), name: "f12")
+    content("f12", text(size: 6pt)[$phi_3$])
+
+    // Edges
+    line((-3, 0.75), (-3, 0.2))
+    line((-2, 0.75), (-2, 0.2))
+    line((-1, 0.75), (-1, 0.2))
+    line((-3, 0.75), (-1.2, 0.2))
+    line((-2, 0.75), (-0.8, 0.2))
+
+    // Arrow
+    line((0, 0.5), (0.8, 0.5), stroke: 1.5pt, mark: (end: ">"))
+
+    // Tensor network (right side)
+    circle((2, 1), radius: 0.3, fill: rgb("#e0e0e0"), name: "t1")
+    content("t1", text(size: 6pt)[$T_1$])
+    circle((3, 1), radius: 0.3, fill: rgb("#e0e0e0"), name: "t2")
+    content("t2", text(size: 6pt)[$T_2$])
+    circle((2.5, 0), radius: 0.3, fill: rgb("#e0e0e0"), name: "t3")
+    content("t3", text(size: 6pt)[$T_3$])
+
+    // Tensor edges (contracted indices)
+    line((2.3, 0.85), (2.35, 0.28), stroke: 1pt + blue)
+    line((2.7, 0.85), (2.65, 0.28), stroke: 1pt + blue)
+
+    // Open edges (free indices)
+    line((1.7, 1), (1.3, 1), stroke: 1pt)
+    line((3.3, 1), (3.7, 1), stroke: 1pt)
+    line((2.5, -0.3), (2.5, -0.6), stroke: 1pt)
+  }),
+  caption: [Factor graph representation as a tensor network. Edges between tensors represent indices to be contracted (summed/maximized over).]
+)
+
+The contraction process proceeds by repeatedly selecting a variable to eliminate:
+
+```python
+# Conceptual contraction loop (simplified)
+for var in elimination_order:
+    bucket = [tensor for tensor in tensors if var in tensor.indices]
+    combined = tropical_contract(bucket, eliminate=var)
+    tensors.update(combined)
+```
+
+== Backpointer Tracking for MPE Recovery
+
+A critical challenge with tensor network contraction is that it only computes the *value* of the optimal solution (the maximum log-probability), not the *assignment* that achieves it.
+
+#definition[
+  A *backpointer* is a data structure that records, for each $max$ operation during contraction:
+  - The indices of eliminated variables
+  - The $arg max$ value for each output configuration
+
+  Formally, when computing $max_x T(y, x)$, we store: $"bp"(y) = arg max_x T(y, x)$
+]
+
+The recovery algorithm traverses the contraction tree in reverse:
+
+#figure(
+  canvas({
+    import draw: *
+
+    set-style(stroke: 0.8pt)
+
+    // Contraction tree
+    content((0, 3), text(weight: "bold", size: 9pt)[Contraction Tree with Backpointers])
+
+    // Root
+    circle((0, 2), radius: 0.35, fill: rgb("#90EE90"), name: "root")
+    content("root", text(size: 7pt)[root])
+
+    // Level 1
+    circle((-1.5, 0.8), radius: 0.35, fill: rgb("#ADD8E6"), name: "n1")
+    content("n1", text(size: 7pt)[$C_1$])
+    circle((1.5, 0.8), radius: 0.35, fill: rgb("#ADD8E6"), name: "n2")
+    content("n2", text(size: 7pt)[$C_2$])
+
+    // Level 2 (leaves)
+    circle((-2.2, -0.4), radius: 0.3, fill: rgb("#FFE4B5"), name: "l1")
+    content("l1", text(size: 6pt)[$T_1$])
+    circle((-0.8, -0.4), radius: 0.3, fill: rgb("#FFE4B5"), name: "l2")
+    content("l2", text(size: 6pt)[$T_2$])
+    circle((0.8, -0.4), radius: 0.3, fill: rgb("#FFE4B5"), name: "l3")
+    content("l3", text(size: 6pt)[$T_3$])
+    circle((2.2, -0.4), radius: 0.3, fill: rgb("#FFE4B5"), name: "l4")
+    content("l4", text(size: 6pt)[$T_4$])
+
+    // Edges with backpointer annotations
+    line((0, 1.65), (-1.2, 1.1), stroke: 1pt)
+    line((0, 1.65), (1.2, 1.1), stroke: 1pt)
+    line((-1.5, 0.45), (-2, -0.1), stroke: 1pt)
+    line((-1.5, 0.45), (-1, -0.1), stroke: 1pt)
+    line((1.5, 0.45), (1, -0.1), stroke: 1pt)
+    line((1.5, 0.45), (2, -0.1), stroke: 1pt)
+
+    // Backpointer arrows (dashed, showing recovery direction)
+    line((0.3, 2), (1.2, 1.15), stroke: (dash: "dashed", paint: red), mark: (end: ">"))
+    content((1.1, 1.7), text(size: 6pt, fill: red)[bp])
+
+    line((-0.3, 2), (-1.2, 1.15), stroke: (dash: "dashed", paint: red), mark: (end: ">"))
+    content((-1.1, 1.7), text(size: 6pt, fill: red)[bp])
+  }),
+  caption: [Contraction tree with backpointers. During contraction (bottom-up), backpointers record argmax indices. During recovery (top-down, dashed arrows), backpointers are traced to reconstruct the optimal assignment.]
+)
+
+The implementation in the `tropical_in_new/` module demonstrates this pattern:
+
+```python
+# From tropical_in_new/src/primitives.py
+@dataclass
+class Backpointer:
+    """Stores argmax metadata for eliminated variables."""
+    elim_vars: Tuple[int, ...]      # Which variables were eliminated
+    elim_shape: Tuple[int, ...]     # Domain sizes
+    out_vars: Tuple[int, ...]       # Remaining output variables
+    argmax_flat: torch.Tensor       # Flattened argmax indices
+
+def tropical_reduce_max(tensor, vars, elim_vars, track_argmax=True):
+    """Tropical max-reduction with optional backpointer tracking."""
+    # ... reshape tensor to separate kept and eliminated dimensions ...
+    values, argmax_flat = torch.max(flat, dim=-1)
+    if track_argmax:
+        backpointer = Backpointer(elim_vars, elim_shape, out_vars, argmax_flat)
+    return values, backpointer
+```
+
+The recovery algorithm traverses the tree from root to leaves:
+
+```python
+# From tropical_in_new/src/mpe.py
+def recover_mpe_assignment(root) -> Dict[int, int]:
+    """Recover MPE assignment from a contraction tree with backpointers."""
+    assignment: Dict[int, int] = {}
+
+    def traverse(node, out_assignment):
+        assignment.update(out_assignment)
+        if isinstance(node, ReduceNode):
+            # Use backpointer to recover eliminated variable values
+            elim_assignment = argmax_trace(node.backpointer, out_assignment)
+            child_assignment = {**out_assignment, **elim_assignment}
+            traverse(node.child, child_assignment)
+        elif isinstance(node, ContractNode):
+            # Propagate to both children
+            elim_assignment = argmax_trace(node.backpointer, out_assignment)
+            combined = {**out_assignment, **elim_assignment}
+            traverse(node.left, {v: combined[v] for v in node.left.vars})
+            traverse(node.right, {v: combined[v] for v in node.right.vars})
+
+    # Start from root with initial assignment from final tensor
+    initial = unravel_argmax(root.values, root.vars)
+    traverse(root, initial)
+    return assignment
+```
+
+== Application to Error Correction Decoding
+
+For quantum error correction, the MAP decoding problem is:
+$ bold(e)^* = arg max_(bold(e) : H bold(e) = bold(s)) P(bold(e)) $
+
+The syndrome constraint $H bold(e) = bold(s)$ can be incorporated as hard constraints (factors that are $-infinity$ for invalid configurations and $0$ otherwise) @farrelly2020parallel.
+
+#figure(
+  table(
+    columns: 3,
+    align: (left, center, center),
+    stroke: 0.5pt,
+    [*Aspect*], [*BP+OSD*], [*Tropical TN*],
+    [Inference type], [Approximate marginals], [Exact MAP],
+    [Degeneracy handling], [OSD post-processing], [Naturally finds one optimal],
+    [Output], [Soft decisions → hard], [Direct hard assignment],
+    [Complexity], [$O(n^3)$ for OSD], [Exp. in treewidth],
+    [Parallelism], [Iterative], [Highly parallelizable],
+  ),
+  caption: [Comparison of BP+OSD and tropical tensor network decoding approaches]
+)
+
+#keypoint[
+  *Advantages of tropical tensor networks for decoding:*
+  - *Exactness*: Guaranteed to find the MAP solution (no local minima)
+  - *No iterations*: Single forward pass plus backtracking
+  - *Natural for structured codes*: Exploits graph structure via contraction ordering
+
+  *Limitations:*
+  - Complexity grows exponentially with treewidth
+  - For dense or high-treewidth codes, may be less efficient than BP+OSD
+  - Requires careful implementation of backpointer tracking
+]
+
+The tensor network approach is particularly well-suited to codes with local structure, such as topological codes where the treewidth grows slowly with system size @orus2019tensor.
+
+== Complexity Considerations
+
+The computational complexity of tropical tensor network contraction is governed by the *treewidth* of the underlying factor graph.
+
+#definition[
+  The *treewidth* $w$ of a graph is the minimum width of any tree decomposition, where width is one less than the size of the largest bag. Intuitively, it measures how "tree-like" the graph is.
+]
+
+#figure(
+  table(
+    columns: 3,
+    align: (left, center, left),
+    stroke: 0.5pt,
+    [*Code Type*], [*Treewidth*], [*Contraction Complexity*],
+    [1D repetition], [$O(1)$], [$O(n)$],
+    [2D toric], [$O(sqrt(n))$], [$O(n dot 2^(sqrt(n)))$],
+    [LDPC (sparse)], [$O(log n)$ to $O(sqrt(n))$], [Varies],
+    [Dense codes], [$O(n)$], [$O(2^n)$ -- intractable],
+  ),
+  caption: [Treewidth and complexity for different code families]
+)
+
+#keypoint[
+  For LDPC codes used in quantum error correction:
+  - The sparse parity check matrix leads to bounded-degree factor graphs
+  - Greedy contraction order heuristics (like those in `omeco`) often find good orderings
+  - The practical complexity is often much better than worst-case bounds suggest
+
+  The tropical tensor network approach provides a systematic way to exploit code structure for efficient exact decoding when the treewidth permits.
+]
 
 #pagebreak()
 
