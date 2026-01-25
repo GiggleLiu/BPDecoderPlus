@@ -157,25 +157,11 @@ class DefaultRule(EinRule):
                 tensors[0], tensors[1], ixs[0], ixs[1], iy, track_argmax
             )
         else:
-            # n-ary: chain as binary operations (left to right)
-            # Note: track_argmax not supported for n-ary
-            if track_argmax:
-                raise NotImplementedError(
-                    "track_argmax not supported for n-ary contractions"
-                )
-            result = tensors[0]
-            result_ix = ixs[0]
-            for i in range(1, len(tensors)):
-                # Combine result with next tensor, keeping all vars
-                combined_vars = tuple(dict.fromkeys(result_ix + ixs[i]))
-                result, _ = tropical_binary_default(
-                    result, tensors[i], result_ix, ixs[i], combined_vars, False
-                )
-                result_ix = combined_vars
-            # Final reduction to output vars
-            if result_ix != iy:
-                result, _ = tropical_unary_default(result, result_ix, iy, False)
-            return result, None
+            raise NotImplementedError(
+                f"n-ary contractions (n={len(tensors)}) are not supported. "
+                "Use contraction order optimization (e.g., omeco) to decompose "
+                "into binary contractions first."
+            )
 
 
 # =============================================================================
