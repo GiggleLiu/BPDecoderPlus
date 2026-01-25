@@ -81,6 +81,12 @@ try:
 except ImportError:
     LDPC_AVAILABLE = False
 
+# Matrix construction mode:
+# - "merged": split_by_separator=True, merge_hyperedges=True (default, smaller matrix)
+# - "split": split_by_separator=True, merge_hyperedges=False (binary obs_flip)
+# - "raw": split_by_separator=False, merge_hyperedges=False (direct from DEM)
+MATRIX_MODE = "merged"
+
 # Configuration
 # Circuit-level depolarizing noise threshold for rotated surface code is ~0.7%.
 # We scan around this threshold to observe the crossing behavior.
@@ -179,13 +185,14 @@ def run_ldpc_decoder(H, syndromes, observables, obs_flip, error_rate=0.01,
     return errors / len(syndromes)
 
 
-def load_dataset(distance: int, error_rate: float):
+def load_dataset(distance: int, error_rate: float, matrix_mode: str = MATRIX_MODE):
     """
     Load dataset for given distance and error rate.
 
     Args:
         distance: Code distance
         error_rate: Physical error rate
+        matrix_mode: Matrix construction mode ("merged", "split", or "raw")
 
     Returns:
         Tuple of (H, syndromes, observables, priors, obs_flip) or None if not found
@@ -202,7 +209,15 @@ def load_dataset(distance: int, error_rate: float):
 
     dem = load_dem(str(dem_path))
     syndromes, observables, _ = load_syndrome_database(str(npz_path))
-    H, priors, obs_flip = build_parity_check_matrix(dem)
+    
+    if matrix_mode == "merged":
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=True, merge_hyperedges=True)
+    elif matrix_mode == "split":
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=True, merge_hyperedges=False)
+    elif matrix_mode == "raw":
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=False, merge_hyperedges=False)
+    else:
+        raise ValueError(f"Unknown matrix_mode: {matrix_mode}")
 
     return H, syndromes, observables, priors, obs_flip
 
@@ -452,7 +467,8 @@ def main():
     If ldpc library is available, it also collects ldpc data and generates
     comparison plots (threshold_comparison.png, threshold_overlay.png, threshold_plot_ldpc.png).
     """
-    print("\nCollecting threshold data (GPU batch mode)...")
+    print(f"\nMatrix construction mode: {MATRIX_MODE}")
+    print("Collecting threshold data (GPU batch mode)...")
 
     # Collect BPDecoderPlus results
     print("\n[BPDecoderPlus]")

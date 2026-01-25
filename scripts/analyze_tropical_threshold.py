@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import torch
 
-from bpdecoderplus.dem import load_dem, build_parity_check_matrix
+from bpdecoderplus.dem import load_dem, build_parity_check_matrix, build_decoding_uai
 from bpdecoderplus.syndrome import load_syndrome_database
 from tropical_in_new.src import mpe_tropical
 from tropical_in_new.src.utils import read_model_from_string
@@ -42,6 +42,12 @@ try:
     HAS_PYMATCHING = True
 except ImportError:
     HAS_PYMATCHING = False
+
+# Matrix construction mode:
+# - "merged": split_by_separator=True, merge_hyperedges=True (default, smaller matrix)
+# - "split": split_by_separator=True, merge_hyperedges=False (binary obs_flip)
+# - "raw": split_by_separator=False, merge_hyperedges=False (direct from DEM)
+MATRIX_MODE = "merged"
 
 # Configuration
 # Circuit-level depolarizing noise threshold for rotated surface code is ~0.7%.
@@ -76,89 +82,6 @@ def compute_observable_prediction(solution: np.ndarray, obs_flip: np.ndarray) ->
     return int(np.dot(solution, obs_flip_binary) % 2)
 
 
-def build_decoding_uai_from_matrix(
-    H: np.ndarray,
-    priors: np.ndarray,
-    syndrome: np.ndarray,
-) -> str:
-    """
-    Build UAI model string for MAP decoding from parity check matrix.
-
-    Creates a factor graph where:
-    - Variables = error bits (columns of H)
-    - Prior factors = error probabilities
-    - Constraint factors = syndrome parity checks
-
-    Args:
-        H: Parity check matrix, shape (n_detectors, n_errors)
-        priors: Prior error probabilities, shape (n_errors,)
-        syndrome: Binary syndrome, shape (n_detectors,)
-
-    Returns:
-        UAI format string.
-    """
-    n_detectors, n_errors = H.shape
-
-    lines = []
-
-    # UAI header
-    lines.append("MARKOV")
-    lines.append(str(n_errors))
-    lines.append(" ".join(["2"] * n_errors))
-
-    # Count factors: n_errors prior factors + n_detectors constraint factors
-    n_factors = n_errors + n_detectors
-    lines.append(str(n_factors))
-
-    # Factor scopes
-    # Prior factors (each covers one error variable)
-    for i in range(n_errors):
-        lines.append(f"1 {i}")
-
-    # Constraint factors (each covers errors connected to a detector)
-    for d in range(n_detectors):
-        error_indices = np.where(H[d, :] == 1)[0]
-        n_vars = len(error_indices)
-        if n_vars > 0:
-            scope_str = " ".join(str(e) for e in error_indices)
-            lines.append(f"{n_vars} {scope_str}")
-        else:
-            lines.append("0")
-
-    lines.append("")
-
-    # Factor values
-    # Prior factors
-    for i in range(n_errors):
-        p = priors[i]
-        lines.append("2")
-        lines.append(str(1.0 - p))
-        lines.append(str(p))
-        lines.append("")
-
-    # Constraint factors
-    for d in range(n_detectors):
-        error_indices = np.where(H[d, :] == 1)[0]
-        n_vars = len(error_indices)
-        if n_vars > 0:
-            syndrome_bit = int(syndrome[d])
-            n_entries = 2**n_vars
-            lines.append(str(n_entries))
-            for i in range(n_entries):
-                parity = bin(i).count("1") % 2
-                if parity == syndrome_bit:
-                    lines.append("1.0")
-                else:
-                    lines.append("1e-30")
-            lines.append("")
-        else:
-            lines.append("1")
-            lines.append("1.0")
-            lines.append("")
-
-    return "\n".join(lines)
-
-
 def run_tropical_decoder(
     H: np.ndarray,
     syndrome: np.ndarray,
@@ -185,7 +108,7 @@ def run_tropical_decoder(
     n_errors = H.shape[1]
 
     # Build UAI model string
-    uai_str = build_decoding_uai_from_matrix(H, priors, syndrome)
+    uai_str = build_decoding_uai(H, priors, syndrome)
     model = read_model_from_string(uai_str)
 
     # Run tropical MPE inference
@@ -204,16 +127,14 @@ def run_tropical_decoder(
     return solution, predicted_obs
 
 
-def load_dataset(distance: int, error_rate: float):
+def load_dataset(distance: int, error_rate: float, matrix_mode: str = MATRIX_MODE):
     """
     Load dataset for given distance and error rate.
-
-    Uses build_parity_check_matrix from bpdecoderplus.dem with merge_hyperedges=False
-    to ensure binary obs_flip values for correct observable prediction.
 
     Args:
         distance: Code distance
         error_rate: Physical error rate
+        matrix_mode: Matrix construction mode ("merged", "split", or "raw")
 
     Returns:
         Tuple of (H, syndromes, observables, priors, obs_flip, dem) or None if not found
@@ -231,14 +152,15 @@ def load_dataset(distance: int, error_rate: float):
     dem = load_dem(str(dem_path))
     syndromes, observables, _ = load_syndrome_database(str(npz_path))
 
-    # Build parity check matrix with merge_hyperedges=True for faster computation
-    # When merge_hyperedges=True, obs_flip becomes a conditional probability
-    # which we threshold at 0.5 in compute_observable_prediction
-    H, priors, obs_flip = build_parity_check_matrix(
-        dem, 
-        split_by_separator=True,
-        merge_hyperedges=True,  # Faster computation with smaller matrix
-    )
+    # Build parity check matrix based on selected mode
+    if matrix_mode == "merged":
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=True, merge_hyperedges=True)
+    elif matrix_mode == "split":
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=True, merge_hyperedges=False)
+    elif matrix_mode == "raw":
+        H, priors, obs_flip = build_parity_check_matrix(dem, split_by_separator=False, merge_hyperedges=False)
+    else:
+        raise ValueError(f"Unknown matrix_mode: {matrix_mode}")
 
     return H, syndromes, observables, priors, obs_flip, dem
 
@@ -457,6 +379,7 @@ def main():
     print("(Using bpdecoderplus.dem for parity check matrix)")
     print("=" * 60)
     print(f"\nConfiguration:")
+    print(f"  Matrix mode: {MATRIX_MODE}")
     print(f"  Distances: {DISTANCES}")
     print(f"  Error rates: {ERROR_RATES}")
     print(f"  Max samples per dataset: {SAMPLE_SIZE}")
