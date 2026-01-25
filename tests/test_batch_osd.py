@@ -327,3 +327,98 @@ class TestOSDSurfaceCode:
         # Both must satisfy syndrome
         assert np.all((H_int @ result_exhaustive) % 2 == syndromes[idx])
         assert np.all((H_int @ result_cs) % 2 == syndromes[idx])
+
+
+class TestOSDRoundTrip:
+    """Round-trip tests inspired by TensorQEC.
+
+    These tests verify that OSD always produces syndrome-satisfying solutions.
+    """
+
+    @pytest.fixture
+    def surface_code_d3(self):
+        """Generate d=3 surface code DEM."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+        H, priors, obs_flip = build_parity_check_matrix(dem)
+        return H, priors, obs_flip
+
+    def test_random_errors_round_trip(self, surface_code_d3):
+        """Random error → syndrome → OSD → verify syndrome satisfaction.
+
+        Inspired by TensorQEC: OSD should ALWAYS satisfy the syndrome,
+        regardless of the input error pattern.
+        """
+        H, priors, obs_flip = surface_code_d3
+        H_int = H.astype(int)
+        n_errors = H.shape[1]
+
+        np.random.seed(42)
+        osd_decoder = BatchOSDDecoder(H, device='cpu')
+
+        trials = 20
+        for trial in range(trials):
+            # Generate random sparse error
+            error = (np.random.random(n_errors) < 0.02).astype(int)
+            syndrome = (H_int @ error) % 2
+
+            # Use uniform priors for simplicity
+            probs = np.full(n_errors, 0.01)
+
+            result = osd_decoder.solve(syndrome.astype(np.int8), probs, osd_order=5)
+            decoded_syndrome = (H_int @ result) % 2
+
+            np.testing.assert_array_equal(
+                decoded_syndrome, syndrome,
+                err_msg=f"Trial {trial}: OSD must satisfy syndrome"
+            )
+
+    def test_zero_syndrome_zero_solution(self, surface_code_d3):
+        """Zero syndrome should decode to zero error.
+
+        This is a strict test: OSD-0 with zero syndrome and uniform priors
+        should return the all-zeros solution.
+        """
+        H, priors, obs_flip = surface_code_d3
+
+        osd_decoder = BatchOSDDecoder(H, device='cpu')
+        zero_syndrome = np.zeros(H.shape[0], dtype=np.int8)
+        probs = np.full(H.shape[1], 0.01)
+
+        result = osd_decoder.solve(zero_syndrome, probs, osd_order=0)
+
+        assert np.sum(result) == 0, (
+            f"Zero syndrome should produce zero error, got weight {np.sum(result)}"
+        )
+
+    def test_multiple_trials_all_satisfy_syndrome(self, surface_code_d3):
+        """100% of OSD solutions must satisfy the syndrome.
+
+        This is the fundamental correctness property of OSD.
+        Unlike BP which may not converge, OSD guarantees a valid solution.
+        """
+        H, priors, obs_flip = surface_code_d3
+        H_int = H.astype(int)
+
+        bp_decoder = BatchBPDecoder(H, priors.astype(np.float32), device='cpu')
+        osd_decoder = BatchOSDDecoder(H, device='cpu')
+
+        syndromes, observables = sample_syndromes(
+            generate_circuit(distance=3, rounds=3, p=0.01, task="z"),
+            num_shots=100
+        )
+
+        batch = torch.from_numpy(syndromes).float()
+        marginals = bp_decoder.decode(batch, max_iter=30, damping=0.2)
+        marginals_np = marginals.numpy()
+
+        violations = 0
+        for i in range(len(syndromes)):
+            result = osd_decoder.solve(syndromes[i], marginals_np[i], osd_order=5)
+            if not np.all((H_int @ result) % 2 == syndromes[i]):
+                violations += 1
+
+        assert violations == 0, (
+            f"{violations}/100 OSD solutions violate syndrome. "
+            "OSD must satisfy syndrome 100% of the time."
+        )

@@ -300,3 +300,104 @@ class TestBPSurfaceCode:
             f"Injected error at position {good_col} has rank {rank}/{len(m)} "
             f"(top {percentile*100:.0f}%). Expected top 20%."
         )
+
+
+class TestBPRoundTrip:
+    """Round-trip tests inspired by TensorQEC.
+
+    These tests verify: error → syndrome → decode → syndrome verification.
+    """
+
+    @pytest.fixture
+    def surface_code_d3(self):
+        """Generate d=3 surface code DEM."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+        H, priors, obs_flip = build_parity_check_matrix(dem)
+        return H, priors, obs_flip
+
+    def test_known_error_round_trip(self, surface_code_d3):
+        """Known error → syndrome → BP+hard decision → verify syndrome.
+
+        Inspired by TensorQEC: decode(compile(BPDecoder()), syndrome) should
+        produce an error pattern that satisfies the original syndrome.
+        """
+        H, priors, obs_flip = surface_code_d3
+        H_int = H.astype(int)
+
+        # Inject a single error at highest-weight column
+        col_weights = H_int.sum(axis=0)
+        error_pos = np.argmax(col_weights)
+        true_error = np.zeros(H.shape[1], dtype=int)
+        true_error[error_pos] = 1
+        syndrome = (H_int @ true_error) % 2
+
+        decoder = BatchBPDecoder(H, priors.astype(np.float32), device='cpu')
+        batch = torch.from_numpy(syndrome[np.newaxis, :]).float()
+        marginals = decoder.decode(batch, max_iter=60, damping=0.2)
+
+        # BP hard decision
+        hard_decision = (marginals[0].numpy() > 0.5).astype(int)
+        decoded_syndrome = (H_int @ hard_decision) % 2
+
+        # Syndrome must match (this is the key round-trip check from TensorQEC)
+        np.testing.assert_array_equal(
+            decoded_syndrome, syndrome,
+            err_msg="BP hard decision must produce a syndrome-satisfying error pattern"
+        )
+
+    def test_multiple_trials_success_rate(self, surface_code_d3):
+        """At low error rate, decoder should succeed most of the time.
+
+        Inspired by TensorQEC: with 1% error rate, BP should converge
+        and satisfy the syndrome for a high fraction of random errors.
+        """
+        H, priors, obs_flip = surface_code_d3
+        H_int = H.astype(int)
+        n_errors = H.shape[1]
+
+        np.random.seed(42)
+        decoder = BatchBPDecoder(H, priors.astype(np.float32), device='cpu')
+
+        trials = 50
+        successes = 0
+
+        for _ in range(trials):
+            # Generate random sparse error (1% probability per position)
+            error = (np.random.random(n_errors) < 0.01).astype(int)
+            syndrome = (H_int @ error) % 2
+
+            batch = torch.from_numpy(syndrome[np.newaxis, :]).float()
+            marginals = decoder.decode(batch, max_iter=60, damping=0.2)
+
+            hard_decision = (marginals[0].numpy() > 0.5).astype(int)
+            decoded_syndrome = (H_int @ hard_decision) % 2
+
+            if np.all(decoded_syndrome == syndrome):
+                successes += 1
+
+        # At 1% error rate, BP should succeed for most trials
+        success_rate = successes / trials
+        assert success_rate >= 0.5, (
+            f"BP success rate {success_rate:.0%} too low. "
+            f"Expected >= 50% with 1% per-qubit error rate."
+        )
+
+    def test_zero_syndrome_zero_error(self, surface_code_d3):
+        """Zero syndrome should decode to (approximately) zero error.
+
+        Inspired by TensorQEC: when syndrome is all zeros, the decoded
+        error pattern should be all zeros (or at least low weight).
+        """
+        H, priors, obs_flip = surface_code_d3
+
+        decoder = BatchBPDecoder(H, priors.astype(np.float32), device='cpu')
+        zero_syndrome = torch.zeros(1, H.shape[0])
+        marginals = decoder.decode(zero_syndrome, max_iter=60, damping=0.2)
+
+        hard_decision = (marginals[0].numpy() > 0.5).astype(int)
+
+        # With zero syndrome and low priors, hard decision should be all zeros
+        assert np.sum(hard_decision) == 0, (
+            f"Zero syndrome should produce zero error, got weight {np.sum(hard_decision)}"
+        )
