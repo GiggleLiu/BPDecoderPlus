@@ -23,18 +23,7 @@ try:
 except ImportError:
     tropical_gemm = None
 
-
-# =============================================================================
-# Backpointer for argmax tracking
-# =============================================================================
-
-@dataclass
-class Backpointer:
-    """Stores argmax metadata for eliminated variables."""
-    elim_vars: Tuple[int, ...]
-    elim_shape: Tuple[int, ...]
-    out_vars: Tuple[int, ...]
-    argmax_flat: torch.Tensor
+from .primitives import Backpointer
 
 
 # =============================================================================
@@ -168,7 +157,25 @@ class DefaultRule(EinRule):
                 tensors[0], tensors[1], ixs[0], ixs[1], iy, track_argmax
             )
         else:
-            raise NotImplementedError("Only unary and binary rules supported")
+            # n-ary: chain as binary operations (left to right)
+            # Note: track_argmax not supported for n-ary
+            if track_argmax:
+                raise NotImplementedError(
+                    "track_argmax not supported for n-ary contractions"
+                )
+            result = tensors[0]
+            result_ix = ixs[0]
+            for i in range(1, len(tensors)):
+                # Combine result with next tensor, keeping all vars
+                combined_vars = tuple(dict.fromkeys(result_ix + ixs[i]))
+                result, _ = tropical_binary_default(
+                    result, tensors[i], result_ix, ixs[i], combined_vars, False
+                )
+                result_ix = combined_vars
+            # Final reduction to output vars
+            if result_ix != iy:
+                result, _ = tropical_unary_default(result, result_ix, iy, False)
+            return result, None
 
 
 # =============================================================================
@@ -382,10 +389,12 @@ def _tropical_gemm_contract(
 
     if batch_vars:
         # Batched tropical GEMM
+        # NOTE: Processing batches sequentially since tropical_gemm doesn't support
+        # native batched operations. For large batch sizes, this may be inefficient.
+        # Consider implementing batched support in tropical_gemm for better performance.
         a_matrix = a_permuted.reshape(batch_size, m_size, k_size)
         b_matrix = b_permuted.reshape(batch_size, k_size, n_size)
 
-        # Process each batch
         results = []
         argmaxes = [] if track_argmax else None
 

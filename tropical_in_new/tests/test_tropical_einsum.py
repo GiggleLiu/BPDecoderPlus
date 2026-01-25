@@ -119,6 +119,23 @@ class TestUnaryRules:
         expected = torch.diagonal(x).max()
         torch.testing.assert_close(result, expected)
 
+    def test_diag_extraction(self):
+        """Test diagonal extraction: ii -> i."""
+        x = torch.randn(4, 4)
+        result, bp = tropical_einsum([x], [(0, 0)], (0,))
+        expected = torch.diagonal(x)
+        torch.testing.assert_close(result, expected)
+        assert bp is None  # No elimination
+
+    def test_diag_with_extra_dim(self):
+        """Test diagonal with extra dimension: iij -> ij."""
+        x = torch.randn(3, 3, 4)
+        result, bp = tropical_einsum([x], [(0, 0, 1)], (0, 1))
+        # torch.diagonal puts the diagonal dimension last, so result is (j, i) = (4, 3)
+        # For (0, 0, 1) -> (0, 1), the diagonal extracts dim 0 and gives shape (dim1=4, diag=3)
+        expected = torch.diagonal(x, dim1=0, dim2=1)  # Shape: (4, 3)
+        torch.testing.assert_close(result, expected)
+
 
 # =============================================================================
 # Binary Rule Tests (adapted from OMEinsum)

@@ -145,8 +145,24 @@ def test_contract_omeco_tree_matches_legacy():
     tree_dict = get_omeco_tree(nodes)
     new_root = contract_omeco_tree(tree_dict, nodes, track_argmax=False)
 
-    # The omeco tree contracts to output indices (which is empty in this case,
-    # so we get the outer product of remaining vars)
-    # Just verify it produces a valid result
+    # Verify result shape and existence
     assert new_root.values is not None
     assert new_root.values.numel() > 0
+
+    # Verify correctness: compute reference result manually
+    # Chain contraction: (1,2) x (2,3) x (3,4) -> (1,4) after eliminating 2,3
+    a, b, c = [n.values for n in nodes]
+    # Tropical matmul: C[i,k] = max_j(A[i,j] + B[j,k])
+    ab = torch.zeros(3, 5)
+    for i in range(3):
+        for k in range(5):
+            ab[i, k] = (a[i, :] + b[:, k]).max()
+    expected = torch.zeros(3, 6)
+    for i in range(3):
+        for k in range(6):
+            expected[i, k] = (ab[i, :] + c[:, k]).max()
+
+    # The final result should match the expected tropical chain contraction
+    torch.testing.assert_close(
+        new_root.values.reshape(expected.shape), expected, atol=1e-5, rtol=1e-5
+    )
