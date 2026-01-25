@@ -100,39 +100,77 @@ the LER curves crossing near p ~ 0.7%, validating the implementation.
 | OSD order | 10 | OSD-CS with up to 2-bit flips in top-10 variables |
 | Samples | 5000 | Per (distance, error_rate) point |
 
-## DEM Parsing: Separator Splitting
+## DEM Parsing: Two-Stage Processing
 
-The Detector Error Model (DEM) format uses `^` separators to indicate correlated faults. For example:
+Building the parity check matrix H from a DEM requires two processing stages for optimal BP decoding performance:
+
+### Stage 1: Separator Splitting
+
+The DEM format uses `^` separators to indicate correlated faults. For example:
 
 ```
 error(0.01) D0 D1 ^ D2
 ```
 
-This means a single fault event with probability 0.01 that triggers **both** detector patterns `{D0, D1}` **and** `{D2}` simultaneously. The current implementation uses **separator splitting**: each component separated by `^` becomes a separate column in the parity check matrix H, sharing the same probability.
+This means a single fault event with probability 0.01 that triggers **both** detector patterns `{D0, D1}` **and** `{D2}` simultaneously. The first stage splits each error instruction by `^` separators:
 
-### Why Separator Splitting is Correct
+- `D0 D1` becomes component 1 with prob=0.01
+- `D2` becomes component 2 with prob=0.01
 
-For BP decoding, errors with `^` separators represent correlated faults where multiple qubits are affected simultaneously. By splitting these into separate columns:
+The `_split_error_by_separator` function handles this parsing. It was critical to restore this function (see Issue #61) because without it, correlated errors were incorrectly handled, leading to wrong H matrix structure.
 
-1. Each component can be independently estimated by BP
-2. The parity check matrix H correctly represents the syndrome patterns
-3. OSD post-processing finds valid error patterns that satisfy the syndrome
+### Stage 2: Hyperedge Merging
 
-The `_split_error_by_separator` function in `dem.py` handles this parsing. It was critical to restore this function (see Issue #61) because without it, correlated errors were incorrectly merged, leading to wrong H matrix structure.
+After separator splitting, **errors with identical detector patterns** are merged into single "hyperedges". This is the approach used by [PyMatching](https://github.com/oscarhiggott/PyMatching) when building decoding graphs from DEM files.
 
-### Alternative: Hyperedge Merging
+**Why hyperedge merging is required:**
 
-An alternative approach (used in early development) merges errors with **identical detector patterns** into single "hyperedges" using XOR probability combination:
+1. **Errors with identical syndromes are indistinguishable** to the decoder
+2. **Detectors are XOR-based**: if two errors trigger the same detector, they cancel
+3. **Reduces factor graph size** for more efficient BP inference
+
+**Probability combination (XOR formula):**
 
 ```python
 p_combined = p_old + p_new - 2 * p_old * p_new
 ```
 
-With this approach:
-- `obs_flip` contains soft probabilities (0.0-1.0) representing P(observable flip | hyperedge fires)
-- Observable prediction uses soft XOR probability chain instead of binary mod-2
+This formula gives P(odd number of errors fire), which is the correct probability for the merged hyperedge since detectors use XOR logic.
 
-Both approaches are mathematically valid. The current separator splitting approach is simpler and produces equivalent decoding results. Small LER differences (~0.001-0.003) between implementations are within statistical tolerance given sample sizes of 5000.
+**Observable flip tracking:**
+
+When merging hyperedges, we track P(observable flipped | hyperedge fires) as a soft probability (0.0-1.0) rather than binary. The decoder thresholds this at 0.5 for the final prediction.
+
+### Implementation in `dem.py`
+
+The `build_parity_check_matrix` function has two key parameters:
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `split_by_separator` | True | Split by `^` separator (Stage 1) |
+| `merge_hyperedges` | True | Merge identical detector patterns (Stage 2) |
+
+**DO NOT REMOVE** the `merge_hyperedges` functionality. It is required for optimal threshold performance. See Issue #61 and PR #62 for the full context and history.
+
+### Example: Effect on Matrix Size
+
+For a d=3 surface code DEM:
+
+| Processing | H columns | Description |
+|------------|-----------|-------------|
+| No splitting | ~286 | One per error instruction (wrong) |
+| Split only | ~556 | One per component (correct but suboptimal) |
+| Split + merge | ~400 | Merged hyperedges (optimal) |
+
+The merged version has fewer columns because errors with identical detector patterns are combined, while still correctly representing the factor graph structure.
+
+### Reference Implementation
+
+PyMatching (https://github.com/oscarhiggott/PyMatching) uses a similar two-stage approach:
+1. Parse DEM errors with separator handling
+2. Build a decoding graph with merged edges for identical detector pairs
+
+This is the standard approach for BP-based decoders on circuit-level noise models.
 
 ## Troubleshooting
 

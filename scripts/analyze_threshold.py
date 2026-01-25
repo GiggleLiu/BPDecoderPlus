@@ -50,7 +50,8 @@ def run_bpdecoderplus_gpu_batch(H, syndromes, observables, obs_flip, priors,
         H: Parity check matrix
         syndromes: Array of syndromes to decode
         observables: Ground truth observable values
-        obs_flip: Observable flip indicators per error
+        obs_flip: Observable flip probabilities per hyperedge (soft values 0.0-1.0
+            when using hyperedge merging, or binary 0/1 without merging)
         priors: Per-qubit error probabilities
         osd_order: OSD search depth
         max_iter: Maximum BP iterations
@@ -66,6 +67,10 @@ def run_bpdecoderplus_gpu_batch(H, syndromes, observables, obs_flip, priors,
     total_errors = 0
     n_samples = len(syndromes)
 
+    # Check if obs_flip contains soft probabilities (from hyperedge merging)
+    # or binary values (from simple splitting)
+    is_soft_obs_flip = obs_flip.dtype == np.float64 and np.any((obs_flip > 0) & (obs_flip < 1))
+
     # Process in chunks to avoid GPU OOM
     for start in range(0, n_samples, chunk_size):
         end = min(start + chunk_size, n_samples)
@@ -79,8 +84,15 @@ def run_bpdecoderplus_gpu_batch(H, syndromes, observables, obs_flip, priors,
         marginals_np = marginals.cpu().numpy()
         solutions = osd_decoder.solve_batch(chunk_syndromes, marginals_np, osd_order=osd_order)
 
-        # Binary observable prediction: mod-2 dot product
-        predictions = (solutions @ obs_flip) % 2
+        if is_soft_obs_flip:
+            # Soft observable prediction: sum soft probabilities, threshold at 0.5
+            # This handles hyperedge merging where obs_flip contains P(obs flip | hyperedge fires)
+            soft_predictions = solutions @ obs_flip
+            predictions = (soft_predictions >= 0.5).astype(np.uint8)
+        else:
+            # Binary observable prediction: mod-2 dot product
+            predictions = (solutions @ obs_flip) % 2
+
         total_errors += np.sum(predictions != chunk_observables)
 
         # Free GPU memory

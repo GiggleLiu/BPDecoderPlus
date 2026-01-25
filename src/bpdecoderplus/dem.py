@@ -171,30 +171,71 @@ def save_dem_json(
 def build_parity_check_matrix(
     dem: stim.DetectorErrorModel,
     split_by_separator: bool = True,
+    merge_hyperedges: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build parity check matrix H from DEM for BP decoding.
 
-    CRITICAL: By default, this function handles ^ separators in DEM error
-    instructions. Each component (separated by ^) becomes a SEPARATE column
-    in H with the same probability. This is required for correct BP decoding.
+    CRITICAL: This function performs two important steps for correct BP decoding:
 
-    Example: error(0.01) D0 D1 ^ D2 creates TWO columns (when split_by_separator=True):
-    - Column 1: prob=0.01, detectors={0,1}, obs_flip=0
-    - Column 2: prob=0.01, detectors={2}, obs_flip=0
+    1. **Separator splitting** (split_by_separator=True, default):
+       DEM error instructions like "error(0.01) D0 D1 ^ D2" are split by the ^
+       separator into separate components. This is required because ^ indicates
+       correlated faults that trigger multiple detector patterns simultaneously.
+       Reference: PyMatching (https://github.com/oscarhiggott/PyMatching) uses
+       the same approach when parsing DEM files.
+
+    2. **Hyperedge merging** (merge_hyperedges=True, default):
+       After separator splitting, errors with IDENTICAL detector patterns are
+       merged into single "hyperedges" using XOR probability combination:
+           p_combined = p_old + p_new - 2 * p_old * p_new
+       This is the correct approach because:
+       - Errors with identical syndromes are indistinguishable to the decoder
+       - Detectors are XOR-based: two errors triggering the same detector cancel
+       - This reduces the factor graph size and improves threshold performance
+       Reference: PyMatching merges errors after parsing DEM files.
+
+    DO NOT REMOVE the merge_hyperedges functionality without understanding its
+    impact on threshold performance. See Issue #61 and PR #62 for context.
 
     Args:
         dem: Detector Error Model.
-        split_by_separator: If True (default), split error targets by ^ separator
-            into separate columns. If False, treat all targets in one error
-            instruction as a single column. Default True is required for correct
-            BP decoding on circuit-level noise models.
+        split_by_separator: If True (default), split error targets by ^ separator.
+            Required for correct BP decoding on circuit-level noise models.
+        merge_hyperedges: If True (default), merge errors with identical detector
+            patterns into single hyperedges with XOR-combined probabilities.
+            This improves threshold performance. If False, keep separate columns.
 
     Returns:
         Tuple of (H, priors, obs_flip) where:
-        - H: Parity check matrix, shape (num_detectors, num_errors)
-        - priors: Prior error probabilities, shape (num_errors,)
-        - obs_flip: Observable flip indicators, shape (num_errors,) binary (0 or 1)
+        - H: Parity check matrix, shape (num_detectors, num_hyperedges)
+        - priors: Prior error probabilities, shape (num_hyperedges,)
+        - obs_flip: Observable flip probabilities, shape (num_hyperedges,)
+            When merge_hyperedges=True, contains P(obs flip | hyperedge fires).
+            When merge_hyperedges=False, binary (0 or 1).
+    """
+    if merge_hyperedges:
+        return _build_parity_check_matrix_hyperedge(dem, split_by_separator)
+    else:
+        return _build_parity_check_matrix_simple(dem, split_by_separator)
+
+
+def _build_parity_check_matrix_simple(
+    dem: stim.DetectorErrorModel,
+    split_by_separator: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build parity check matrix without hyperedge merging.
+
+    Creates one column per error component. This is simpler but may have
+    worse threshold performance than the hyperedge-merged version.
+
+    Args:
+        dem: Detector Error Model.
+        split_by_separator: If True, split error targets by ^ separator.
+
+    Returns:
+        Tuple of (H, priors, obs_flip) with binary obs_flip values.
     """
     errors = []
     for inst in dem.flattened():
@@ -203,9 +244,6 @@ def build_parity_check_matrix(
             targets = inst.targets_copy()
 
             if split_by_separator:
-                # CRITICAL: Split by ^ separator - each component is a separate error
-                # Without this, the parity check matrix has wrong structure and
-                # BP decoding produces incorrect results.
                 for comp in _split_error_by_separator(targets):
                     errors.append({
                         "prob": prob,
@@ -213,7 +251,6 @@ def build_parity_check_matrix(
                         "observables": comp["observables"],
                     })
             else:
-                # No splitting - treat all targets as single error (legacy behavior)
                 detectors = [t.val for t in targets if t.is_relative_detector_id()]
                 observables = [t.val for t in targets if t.is_logical_observable_id()]
                 errors.append({
@@ -235,6 +272,122 @@ def build_parity_check_matrix(
             H[d, j] = 1
         if e["observables"]:
             obs_flip[j] = 1
+
+    return H, priors, obs_flip
+
+
+def _build_parity_check_matrix_hyperedge(
+    dem: stim.DetectorErrorModel,
+    split_by_separator: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build parity check matrix with hyperedge merging for optimal threshold.
+
+    CRITICAL: DO NOT REMOVE THIS FUNCTION. It is required for optimal threshold
+    performance. See Issue #61 and PR #62 for the history of why this exists.
+
+    Multiple error mechanisms that trigger the same detector pattern are
+    merged into a single hyperedge. Probabilities are combined using the
+    XOR formula (since detectors use XOR - two errors cancel out):
+        p_combined = p_old + p_new - 2 * p_old * p_new
+
+    This is the correct approach for BP decoding because:
+    1. Errors with identical syndromes are indistinguishable
+    2. They should be represented as a single variable in the factor graph
+    3. Detectors are XOR-based: if two errors trigger same detector, they cancel
+
+    For observable flips, we track the probability that an odd number of
+    observable-flipping errors occur (also XOR-based).
+
+    Reference: PyMatching (https://github.com/oscarhiggott/PyMatching) uses
+    a similar approach, merging errors after parsing DEM files to build the
+    decoding graph.
+
+    Args:
+        dem: Detector Error Model.
+        split_by_separator: If True, split error targets by ^ separator first.
+
+    Returns:
+        Tuple of (H, priors, obs_flip) where obs_flip contains soft probabilities.
+    """
+    n_detectors = dem.num_detectors
+
+    # Map from detector pattern (frozenset) to hyperedge info
+    # Each hyperedge stores: (combined_prob, obs_flip_prob)
+    # combined_prob = P(odd number of errors fire) - XOR probability
+    # obs_flip_prob = P(odd number of obs-flipping errors fire) - XOR probability
+    hyperedge_map: dict[frozenset, tuple[float, float]] = {}
+
+    for inst in dem.flattened():
+        if inst.type == "error":
+            prob = inst.args_copy()[0]
+            if prob == 0:
+                continue  # Skip zero-probability errors
+
+            targets = inst.targets_copy()
+
+            # Split by separator into independent components
+            if split_by_separator:
+                components = _split_error_by_separator(targets)
+            else:
+                detectors = [t.val for t in targets if t.is_relative_detector_id()]
+                observables = [t.val for t in targets if t.is_logical_observable_id()]
+                components = [{"detectors": detectors, "observables": observables}]
+
+            for comp in components:
+                detectors = frozenset(comp["detectors"])
+                has_obs_flip = len(comp["observables"]) > 0
+
+                if detectors in hyperedge_map:
+                    # Merge with existing hyperedge using XOR probability
+                    p_old, obs_prob_old = hyperedge_map[detectors]
+
+                    # XOR probability: P(exactly one of A or B fires)
+                    # p_xor = p_old * (1 - p_new) + p_new * (1 - p_old)
+                    #       = p_old + p_new - 2 * p_old * p_new
+                    # This is correct because detectors use XOR:
+                    # if both errors fire, the detector triggers twice = no trigger
+                    p_combined = p_old + prob - 2 * p_old * prob
+
+                    # Observable flip probability (XOR):
+                    # P(obs flipped) = P(odd number of obs-flipping errors fire)
+                    # Use same XOR formula for errors that flip observable
+                    if has_obs_flip:
+                        # New error flips observable: XOR with existing flip probability
+                        obs_prob_new = obs_prob_old * (1 - prob) + prob * (1 - obs_prob_old)
+                    else:
+                        # New error doesn't flip observable
+                        # P(obs flip) = P(old flips) * P(new doesn't fire)
+                        # This preserves the obs flip only when the non-flipping error doesn't fire
+                        obs_prob_new = obs_prob_old * (1 - prob)
+
+                    hyperedge_map[detectors] = (p_combined, obs_prob_new)
+                else:
+                    # New hyperedge
+                    obs_prob = prob if has_obs_flip else 0.0
+                    hyperedge_map[detectors] = (prob, obs_prob)
+
+    # Convert hyperedge map to arrays
+    n_hyperedges = len(hyperedge_map)
+
+    H = np.zeros((n_detectors, n_hyperedges), dtype=np.uint8)
+    priors = np.zeros(n_hyperedges, dtype=np.float64)
+    obs_flip = np.zeros(n_hyperedges, dtype=np.float64)
+
+    for j, (detectors, (prob, obs_prob)) in enumerate(hyperedge_map.items()):
+        priors[j] = prob
+        for d in detectors:
+            H[d, j] = 1
+        # Store conditional probability: P(obs flip | hyperedge fires)
+        # For decoding, threshold at 0.5 to determine if error flips observable
+        if prob > 0:
+            obs_flip[j] = obs_prob / prob
+        else:
+            obs_flip[j] = 0.0
+
+    # Clip to [0, 1] to handle floating point precision issues
+    priors = np.clip(priors, 0.0, 1.0)
+    obs_flip = np.clip(obs_flip, 0.0, 1.0)
 
     return H, priors, obs_flip
 
