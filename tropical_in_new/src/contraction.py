@@ -47,8 +47,61 @@ def _infer_var_sizes(nodes: Iterable[TensorNode]) -> dict[int, int]:
     return sizes
 
 
+def _find_connected_components(ixs: list[list[int]]) -> list[list[int]]:
+    """Find connected components among factors based on shared variables.
+    
+    Args:
+        ixs: List of variable lists for each factor.
+        
+    Returns:
+        List of lists, where each inner list contains factor indices in one component.
+    """
+    n = len(ixs)
+    if n == 0:
+        return []
+    
+    # Build adjacency based on shared variables
+    var_to_factors: dict[int, list[int]] = {}
+    for i, vars in enumerate(ixs):
+        for v in vars:
+            if v not in var_to_factors:
+                var_to_factors[v] = []
+            var_to_factors[v].append(i)
+    
+    # Find connected components using union-find
+    parent = list(range(n))
+    
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+    
+    def union(x, y):
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+    
+    # Union factors that share variables
+    for factors in var_to_factors.values():
+        for i in range(1, len(factors)):
+            union(factors[0], factors[i])
+    
+    # Group by component
+    components: dict[int, list[int]] = {}
+    for i in range(n):
+        root = find(i)
+        if root not in components:
+            components[root] = []
+        components[root].append(i)
+    
+    return list(components.values())
+
+
 def get_omeco_tree(nodes: list[TensorNode]) -> dict:
     """Get the optimized contraction tree from omeco.
+    
+    Handles disconnected components by contracting each component
+    separately and combining the results.
 
     Args:
         nodes: List of tensor nodes to contract.
@@ -58,11 +111,82 @@ def get_omeco_tree(nodes: list[TensorNode]) -> dict:
         - Leaf: {"tensor_index": int}
         - Node: {"args": [...], "eins": {"ixs": [[...], ...], "iy": [...]}}
     """
+    if not nodes:
+        raise ValueError("Cannot contract empty list of nodes")
+    
     ixs = [list(node.vars) for node in nodes]
     sizes = _infer_var_sizes(nodes)
-    method = omeco.GreedyMethod()
-    tree = omeco.optimize_code(ixs, [], sizes, method)
-    return tree.to_dict()
+    
+    # Find connected components
+    components = _find_connected_components(ixs)
+    
+    if len(components) == 1:
+        # Single component - use omeco directly
+        method = omeco.GreedyMethod()
+        tree = omeco.optimize_code(ixs, [], sizes, method)
+        return tree.to_dict()
+    
+    # Multiple components - contract each separately and combine
+    component_trees = []
+    for comp_indices in components:
+        if len(comp_indices) == 1:
+            # Single factor - just reference it
+            component_trees.append({"tensor_index": comp_indices[0]})
+        else:
+            # Multiple factors - use omeco for this component
+            comp_ixs = [ixs[i] for i in comp_indices]
+            comp_sizes = {}
+            for i in comp_indices:
+                for v in ixs[i]:
+                    if v in sizes:
+                        comp_sizes[v] = sizes[v]
+            
+            method = omeco.GreedyMethod()
+            tree = omeco.optimize_code(comp_ixs, [], comp_sizes, method)
+            tree_dict = tree.to_dict()
+            
+            # Remap tensor indices to original
+            def remap_indices(node):
+                if "tensor_index" in node:
+                    return {"tensor_index": comp_indices[node["tensor_index"]]}
+                args = node.get("args", node.get("children", []))
+                return {
+                    "args": [remap_indices(a) for a in args],
+                    "eins": node.get("eins", {})
+                }
+            
+            component_trees.append(remap_indices(tree_dict))
+    
+    # Combine component trees into a single tree
+    # We chain them: ((tree0, tree1), tree2), ...
+    def combine_trees(trees):
+        if len(trees) == 1:
+            return trees[0]
+        elif len(trees) == 2:
+            # Combine two trees
+            # Get output indices for each
+            def get_output_vars(tree):
+                if "tensor_index" in tree:
+                    return list(nodes[tree["tensor_index"]].vars)
+                eins = tree.get("eins", {})
+                return eins.get("iy", [])
+            
+            out0 = get_output_vars(trees[0])
+            out1 = get_output_vars(trees[1])
+            combined_out = list(dict.fromkeys(out0 + out1))
+            
+            return {
+                "args": trees,
+                "eins": {"ixs": [out0, out1], "iy": combined_out}
+            }
+        else:
+            # Recursively combine
+            mid = len(trees) // 2
+            left = combine_trees(trees[:mid])
+            right = combine_trees(trees[mid:])
+            return combine_trees([left, right])
+    
+    return combine_trees(component_trees)
 
 
 def contract_omeco_tree(
