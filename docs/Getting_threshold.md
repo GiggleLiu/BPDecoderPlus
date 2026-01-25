@@ -99,3 +99,56 @@ the LER curves crossing near p ~ 0.7%, validating the implementation.
 | Damping | 0.2 | Prevents oscillation |
 | OSD order | 10 | OSD-CS with up to 2-bit flips in top-10 variables |
 | Samples | 5000 | Per (distance, error_rate) point |
+
+## DEM Parsing: Separator Splitting
+
+The Detector Error Model (DEM) format uses `^` separators to indicate correlated faults. For example:
+
+```
+error(0.01) D0 D1 ^ D2
+```
+
+This means a single fault event with probability 0.01 that triggers **both** detector patterns `{D0, D1}` **and** `{D2}` simultaneously. The current implementation uses **separator splitting**: each component separated by `^` becomes a separate column in the parity check matrix H, sharing the same probability.
+
+### Why Separator Splitting is Correct
+
+For BP decoding, errors with `^` separators represent correlated faults where multiple qubits are affected simultaneously. By splitting these into separate columns:
+
+1. Each component can be independently estimated by BP
+2. The parity check matrix H correctly represents the syndrome patterns
+3. OSD post-processing finds valid error patterns that satisfy the syndrome
+
+The `_split_error_by_separator` function in `dem.py` handles this parsing. It was critical to restore this function (see Issue #61) because without it, correlated errors were incorrectly merged, leading to wrong H matrix structure.
+
+### Alternative: Hyperedge Merging
+
+An alternative approach (used in early development) merges errors with **identical detector patterns** into single "hyperedges" using XOR probability combination:
+
+```python
+p_combined = p_old + p_new - 2 * p_old * p_new
+```
+
+With this approach:
+- `obs_flip` contains soft probabilities (0.0-1.0) representing P(observable flip | hyperedge fires)
+- Observable prediction uses soft XOR probability chain instead of binary mod-2
+
+Both approaches are mathematically valid. The current separator splitting approach is simpler and produces equivalent decoding results. Small LER differences (~0.001-0.003) between implementations are within statistical tolerance given sample sizes of 5000.
+
+## Troubleshooting
+
+### Missing Datasets
+
+If `analyze_threshold.py` reports missing datasets:
+
+```bash
+# Regenerate specific datasets
+uv run python scripts/generate_threshold_datasets.py
+```
+
+### GPU Memory Issues
+
+For large batches, reduce `chunk_size` in `run_bpdecoderplus_gpu_batch()` or use CPU:
+
+```python
+device = 'cpu'  # Instead of 'cuda'
+```
