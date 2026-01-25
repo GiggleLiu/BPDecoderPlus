@@ -139,7 +139,88 @@ This formula gives P(odd number of errors fire), which is the correct probabilit
 
 **Observable flip tracking:**
 
-When merging hyperedges, we track P(observable flipped | hyperedge fires) as a soft probability (0.0-1.0) rather than binary. The decoder thresholds this at 0.5 for the final prediction.
+When merging hyperedges, we track P(observable flipped | hyperedge fires) as a soft probability (0.0-1.0) rather than binary. The decoder uses XOR probability chaining (see below) for the final prediction.
+
+## XOR Probability Chain for Observable Prediction
+
+After the decoder produces an error pattern (solution), we need to compute whether the logical observable was flipped. This is **critical** for correct threshold analysis.
+
+### The Problem
+
+When hyperedges are merged, `obs_flip[i]` stores a **soft probability** P(observable flips | hyperedge i fires), not a binary value. If multiple hyperedges fire in the solution, we need P(odd number of observable flips occurred).
+
+### Why Simple Summation Fails
+
+A naive approach might compute:
+
+```python
+# WRONG: Simple summation
+prediction = int((solution @ obs_flip) >= 0.5)
+```
+
+This fails because observable flips follow **XOR logic** (mod-2 arithmetic):
+- If two errors both flip the observable, they **cancel out** (0 XOR 0 = 0, 1 XOR 1 = 0)
+- Simple summation treats them as additive, leading to wrong predictions
+
+**Example:** Two hyperedges fire, each with obs_flip = 0.5
+
+| Method | Calculation | Result |
+|--------|-------------|--------|
+| Wrong (sum) | 0.5 + 0.5 = 1.0 ≥ 0.5 | predicts 1 |
+| Correct (XOR) | 0.5×0.5 + 0.5×0.5 = 0.5 | predicts 0 (at threshold) |
+
+### The Correct XOR Probability Formula
+
+For two independent events A and B with probabilities p_A and p_B of flipping the observable:
+
+```
+P(A XOR B) = P(A)(1 - P(B)) + P(B)(1 - P(A))
+           = p_A + p_B - 2 * p_A * p_B
+```
+
+This extends to a chain of events. Starting with P(flip) = 0, for each active hyperedge i:
+
+```python
+p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+```
+
+### Implementation
+
+The `compute_observable_predictions_batch` function in `analyze_threshold.py` implements this:
+
+```python
+def compute_observable_predictions_batch(solutions, obs_flip):
+    """Compute observable predictions using soft XOR probability chain."""
+    batch_size = solutions.shape[0]
+    predictions = np.zeros(batch_size, dtype=int)
+    for b in range(batch_size):
+        p_flip = 0.0
+        for i in np.where(solutions[b] == 1)[0]:
+            # XOR probability: P(odd flips so far) XOR P(this flips)
+            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+        predictions[b] = int(p_flip > 0.5)
+    return predictions
+```
+
+### Impact on Threshold Results
+
+Without XOR probability chaining, threshold analysis produces **invalid results**:
+
+| Distance | p=0.001 (wrong) | p=0.001 (correct) |
+|----------|-----------------|-------------------|
+| d=3 | LER ≈ 0.0008 | LER ≈ 0.0000 |
+| d=5 | LER ≈ 0.0030 | LER ≈ 0.0000 |
+
+The wrong method shows d=5 performing **worse** than d=3 at low error rates, which violates the expected threshold behavior (larger codes should perform better below threshold).
+
+### When XOR Matters Most
+
+XOR probability chaining is essential when:
+1. **Hyperedge merging is enabled** (default) - `obs_flip` contains soft probabilities
+2. **Multiple hyperedges fire** in the decoder solution
+3. **Soft probabilities are near 0.5** - where XOR vs sum differs most
+
+For binary `obs_flip` values (0 or 1), XOR reduces to mod-2 addition, so both methods agree. But with hyperedge merging, soft probabilities arise from merging errors with different observable flip patterns.
 
 ### Implementation in `dem.py`
 

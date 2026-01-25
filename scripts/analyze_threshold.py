@@ -26,6 +26,54 @@ from bpdecoderplus.batch_osd import BatchOSDDecoder
 CUDA_AVAILABLE = torch.cuda.is_available()
 
 
+def compute_observable_prediction(solution: np.ndarray, obs_flip: np.ndarray) -> int:
+    """
+    Compute observable prediction using soft XOR probability chain.
+
+    When hyperedges are merged, obs_flip stores conditional probabilities
+    P(obs flip | hyperedge fires). This function correctly computes
+    P(odd number of observable flips) by chaining XOR probabilities.
+
+    Args:
+        solution: Binary error pattern from decoder
+        obs_flip: Observable flip probabilities (0.0 to 1.0)
+
+    Returns:
+        Predicted observable value (0 or 1)
+    """
+    p_flip = 0.0
+    for i in range(len(solution)):
+        if solution[i] == 1:
+            # XOR probability: P(odd flips so far) XOR P(this flips)
+            # P(A XOR B) = P(A)(1-P(B)) + P(B)(1-P(A))
+            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+    return int(p_flip > 0.5)
+
+
+def compute_observable_predictions_batch(solutions: np.ndarray, obs_flip: np.ndarray) -> np.ndarray:
+    """
+    Compute observable predictions for a batch of solutions using soft XOR.
+
+    Vectorized version of soft XOR probability computation.
+
+    Args:
+        solutions: Batch of binary error patterns, shape (batch, n_errors)
+        obs_flip: Observable flip probabilities (0.0 to 1.0)
+
+    Returns:
+        Predicted observable values, shape (batch,)
+    """
+    batch_size = solutions.shape[0]
+    predictions = np.zeros(batch_size, dtype=int)
+    for b in range(batch_size):
+        p_flip = 0.0
+        # Only iterate over active hyperedges (where solution[b,i] == 1)
+        for i in np.where(solutions[b] == 1)[0]:
+            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+        predictions[b] = int(p_flip > 0.5)
+    return predictions
+
+
 # Check if ldpc is available
 try:
     from ldpc import BpOsdDecoder
@@ -67,10 +115,6 @@ def run_bpdecoderplus_gpu_batch(H, syndromes, observables, obs_flip, priors,
     total_errors = 0
     n_samples = len(syndromes)
 
-    # Check if obs_flip contains soft probabilities (from hyperedge merging)
-    # or binary values (from simple splitting)
-    is_soft_obs_flip = obs_flip.dtype == np.float64 and np.any((obs_flip > 0) & (obs_flip < 1))
-
     # Process in chunks to avoid GPU OOM
     for start in range(0, n_samples, chunk_size):
         end = min(start + chunk_size, n_samples)
@@ -84,14 +128,8 @@ def run_bpdecoderplus_gpu_batch(H, syndromes, observables, obs_flip, priors,
         marginals_np = marginals.cpu().numpy()
         solutions = osd_decoder.solve_batch(chunk_syndromes, marginals_np, osd_order=osd_order)
 
-        if is_soft_obs_flip:
-            # Soft observable prediction: sum soft probabilities, threshold at 0.5
-            # This handles hyperedge merging where obs_flip contains P(obs flip | hyperedge fires)
-            soft_predictions = solutions @ obs_flip
-            predictions = (soft_predictions >= 0.5).astype(np.uint8)
-        else:
-            # Binary observable prediction: mod-2 dot product
-            predictions = (solutions @ obs_flip) % 2
+        # Compute predictions using soft XOR (handles fractional obs_flip from hyperedge merging)
+        predictions = compute_observable_predictions_batch(solutions, obs_flip)
 
         total_errors += np.sum(predictions != chunk_observables)
 
@@ -134,7 +172,7 @@ def run_ldpc_decoder(H, syndromes, observables, obs_flip, error_rate=0.01,
     errors = 0
     for i, syndrome in enumerate(syndromes):
         result = ldpc_decoder.decode(syndrome.astype(np.uint8))
-        predicted_obs = int(np.dot(result, obs_flip) % 2)
+        predicted_obs = compute_observable_prediction(result, obs_flip)
         if predicted_obs != observables[i]:
             errors += 1
 

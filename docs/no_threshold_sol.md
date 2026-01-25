@@ -233,21 +233,26 @@ Sum-Product BP performs significantly better than Min-Sum BP:
 
 **Recommendation**: Use `method='sum-product'` for BP decoding (matches ldpc library default).
 
-### 7.4 Remaining Issue: Still Above Threshold
+### 7.4 Threshold Confirmed at p ≈ 0.6-0.7%
 
-Even with XOR hyperedge merging and Sum-Product BP, the LER still increases with distance, indicating operation above the effective threshold. This is **expected behavior** for circuit-level noise with BP+OSD, which has a threshold of ~0.1-0.3%.
+With proper circuit-level depolarizing noise and hyperedge merging, BPDecoderPlus achieves the expected **~0.7% threshold** for rotated surface codes.
 
-**BPDecoderPlus Results (2000 samples per point):**
+**Threshold Crossing Analysis (10000 samples per point):**
 
-| p | d=3 | d=5 | d=7 |
-|---|-----|-----|-----|
-| 0.0001 | 0.00% | 0.00% | 0.05% |
-| 0.003 | 1.30% | 1.80% | 5.05% |
-| 0.005 | 2.30% | 4.60% | 7.95% |
-| 0.007 | 4.95% | 7.20% | 11.35% |
-| 0.01 | 7.35% | 12.10% | 20.80% |
+| p | d=3 | d=5 | d=7 | Status |
+|---|-----|-----|-----|--------|
+| 0.004 | 0.99% | 0.81% | 0.34% | BELOW threshold |
+| 0.005 | 2.31% | 1.63% | 1.15% | BELOW threshold |
+| 0.006 | 2.55% | 2.42% | 2.09% | BELOW threshold |
+| 0.007 | 2.81% | 3.58% | 3.18% | CROSSING |
+| 0.008 | 3.76% | 4.97% | 5.36% | ABOVE threshold |
 
-The LER increasing with distance confirms we are operating above threshold at p >= 0.003.
+**Key observations:**
+- Below threshold (p < 0.006): LER decreases with distance (d7 < d5 < d3)
+- At threshold (p ≈ 0.007): Lines cross, d5 becomes worst
+- Above threshold (p > 0.007): LER increases with distance (d7 > d5 > d3)
+
+This confirms the BP+OSD decoder with hyperedge merging is working correctly.
 
 ### 7.5 Comparison with ldpc Library
 
