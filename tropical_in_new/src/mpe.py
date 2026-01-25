@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import Dict, Iterable
 
-from .contraction import ContractNode, ReduceNode, build_contraction_tree, choose_order
-from .contraction import contract_tree as _contract_tree
+from .contraction import (
+    ContractNode,
+    ReduceNode,
+    contract_omeco_tree,
+    get_omeco_tree,
+)
 from .network import TensorNode, build_network
-from .primitives import argmax_trace, tropical_einsum, tropical_reduce_max
+from .tropical_einsum import argmax_trace, tropical_reduce_max
 from .utils import UAIModel, build_tropical_factors
 
 
@@ -70,16 +74,22 @@ def recover_mpe_assignment(root) -> Dict[int, int]:
 def mpe_tropical(
     model: UAIModel,
     evidence: Dict[int, int] | None = None,
-    order: Iterable[int] | None = None,
 ) -> tuple[Dict[int, int], float, Dict[str, int | tuple[int, ...]]]:
-    """Return MPE assignment, score, and contraction metadata."""
+    """Return MPE assignment, score, and contraction metadata.
+
+    Uses omeco for optimized contraction order and tropical-gemm for acceleration.
+    """
     evidence = evidence or {}
     factors = build_tropical_factors(model, evidence)
     nodes = build_network(factors)
-    if order is None:
-        order = choose_order(nodes, heuristic="omeco")
-    tree = build_contraction_tree(order, nodes)
-    root = _contract_tree(tree, einsum_fn=tropical_einsum)
+
+    # Get optimized contraction tree from omeco
+    tree_dict = get_omeco_tree(nodes)
+
+    # Contract using the optimized tree
+    root = contract_omeco_tree(tree_dict, nodes, track_argmax=True)
+
+    # Final reduction if there are remaining variables
     if root.vars:
         values, backpointer = tropical_reduce_max(
             root.values, root.vars, tuple(root.vars), track_argmax=True
@@ -91,12 +101,11 @@ def mpe_tropical(
             elim_vars=tuple(root.vars),
             backpointer=backpointer,
         )
+
     assignment = recover_mpe_assignment(root)
     assignment.update({int(k): int(v) for k, v in evidence.items()})
     score = float(root.values.item())
     info = {
-        "order": tuple(order),
         "num_nodes": len(nodes),
-        "num_elims": len(tuple(order)),
     }
     return assignment, score, info

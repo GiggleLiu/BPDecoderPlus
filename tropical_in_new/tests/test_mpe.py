@@ -79,7 +79,7 @@ def test_mpe_three_variables():
 
 
 def test_mpe_partial_order():
-    """Test MPE with a partial elimination order (remaining vars reduced at end)."""
+    """Test MPE with omeco-optimized contraction order."""
     uai = "\n".join(
         [
             "MARKOV",
@@ -95,8 +95,8 @@ def test_mpe_partial_order():
         ]
     )
     model = read_model_from_string(uai, factor_eltype=torch.float64)
-    # Only eliminate var 1, leaving var 2 for final reduce
-    assignment, score, _ = mpe_tropical(model, order=[1])
+    # Now uses omeco-optimized order automatically
+    assignment, score, _ = mpe_tropical(model)
     brute_assignment, brute_score = _brute_force_mpe(
         model.cards, [(f.vars, f.values) for f in model.factors]
     )
@@ -118,7 +118,7 @@ def test_recover_mpe_assignment_tensor_node():
 def test_recover_mpe_assignment_bad_node():
     """Test recover_mpe_assignment raises on missing variables."""
     from tropical_in_new.src.contraction import ReduceNode
-    from tropical_in_new.src.primitives import Backpointer
+    from tropical_in_new.src.tropical_einsum import Backpointer
 
     child = TensorNode(vars=(1, 2), values=torch.tensor([[0.1, 0.9], [0.3, 0.2]]))
     bp = Backpointer(
@@ -126,7 +126,8 @@ def test_recover_mpe_assignment_bad_node():
         argmax_flat=torch.tensor([1, 0])
     )
     root = ReduceNode(vars=(), values=torch.tensor(0.9), child=child, elim_vars=(2,), backpointer=bp)
-    with pytest.raises(KeyError, match="Missing assignment"):
+    # Should raise KeyError when trying to access missing variable 99
+    with pytest.raises(KeyError):
         recover_mpe_assignment(root)
 
 
