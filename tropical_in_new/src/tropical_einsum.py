@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum, auto
 from typing import List, Tuple, Optional
 
 import numpy as np
@@ -96,7 +95,12 @@ class Permutedims(EinRule):
 
 
 class Diag(EinRule):
-    """Extract diagonal elements."""
+    """Extract diagonal elements.
+
+    Note: This is a simplified implementation that handles basic diagonal
+    extraction. For complex cases with multiple repeated indices and
+    permutation, use DefaultRule instead.
+    """
 
     def execute(self, tensors, ixs, iy, track_argmax=False):
         x = tensors[0]
@@ -116,10 +120,6 @@ class Diag(EinRule):
             if len(dims) > 1:
                 # Take diagonal along these dimensions
                 result = torch.diagonal(result, dim1=dims[0], dim2=dims[1])
-
-        # Permute to match iy
-        current_vars = [v for v in ix if ix.count(v) == 1 or ix.index(v) == ix.index(v)]
-        # This is simplified - full implementation would need proper index tracking
 
         return result, None
 
@@ -242,6 +242,13 @@ def tropical_reduce_max(
     """Tropical sum (max) over specified variables."""
     if not elim_vars:
         return tensor, None
+
+    # Validate that all elimination variables are present in vars
+    missing_vars = [v for v in elim_vars if v not in vars]
+    if missing_vars:
+        raise ValueError(
+            f"Elimination variables {missing_vars} are not present in vars {vars}"
+        )
 
     elim_axes = [vars.index(v) for v in elim_vars]
     keep_axes = [i for i in range(len(vars)) if i not in elim_axes]
@@ -536,6 +543,12 @@ def argmax_trace(backpointer: Backpointer, assignment: dict[int, int]) -> dict[i
         return {}
 
     if backpointer.out_vars:
+        # Validate that all required output variables are present in the assignment
+        missing = [v for v in backpointer.out_vars if v not in assignment]
+        if missing:
+            raise KeyError(
+                f"Missing assignment values for output variables: {missing}"
+            )
         idx = tuple(assignment[v] for v in backpointer.out_vars)
         flat = int(backpointer.argmax_flat[idx].item())
     else:

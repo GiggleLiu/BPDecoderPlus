@@ -91,7 +91,6 @@ def contract_omeco_tree(
         # Internal node - contract children
         args = node["args"]
         eins = node["eins"]
-        ixs = [tuple(ix) for ix in eins["ixs"]]
         out_vars = tuple(eins["iy"])
 
         # Recursively contract children

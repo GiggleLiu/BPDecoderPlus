@@ -2,21 +2,16 @@
 
 import pytest
 import torch
-import numpy as np
 
 from tropical_in_new.src.tropical_einsum import (
     tropical_einsum,
-    tropical_reduce_max,
     match_rule,
     argmax_trace,
-    Backpointer,
     Identity,
     TropicalSum,
     Permutedims,
-    Diag,
     Tr,
     SimpleBinaryRule,
-    DefaultRule,
     _align_tensor,
 )
 
