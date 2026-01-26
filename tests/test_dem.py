@@ -13,6 +13,7 @@ import torch
 from bpdecoderplus.circuit import generate_circuit
 from bpdecoderplus.dem import (
     _split_error_by_separator,
+    build_decoding_uai,
     build_parity_check_matrix,
     extract_dem,
     generate_dem_from_circuit,
@@ -542,3 +543,128 @@ class TestMergedMatrixModeThreshold:
             f"but got d=3: {lers[3]:.4f}, d=5: {lers[5]:.4f}. "
             f"This may indicate a problem with matrix construction mode."
         )
+
+
+class TestBuildDecodingUAI:
+    """Tests for build_decoding_uai function.
+    
+    This function builds a UAI factor graph for MAP decoding from a parity
+    check matrix, priors, and syndrome.
+    """
+
+    def test_basic_uai_structure(self):
+        """Test that UAI output has correct structure."""
+        # Simple 2x3 matrix: 2 detectors, 3 errors
+        H = np.array([[1, 1, 0], [0, 1, 1]], dtype=np.uint8)
+        priors = np.array([0.1, 0.2, 0.15])
+        syndrome = np.array([1, 0], dtype=np.uint8)
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        lines = uai_str.strip().split("\n")
+        
+        # Check header
+        assert lines[0] == "MARKOV"
+        assert lines[1] == "3"  # 3 variables (errors)
+        assert lines[2] == "2 2 2"  # All binary
+        assert lines[3] == "5"  # 3 prior factors + 2 constraint factors
+
+    def test_prior_factors(self):
+        """Test that prior factors have correct values."""
+        H = np.array([[1, 0], [0, 1]], dtype=np.uint8)
+        priors = np.array([0.1, 0.3])
+        syndrome = np.array([0, 0], dtype=np.uint8)
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+        lines = uai_str.strip().split("\n")
+
+        # Find factor values section (after scopes)
+        # Structure: header (4 lines) + scopes (4 lines: 2 prior + 2 constraint) + blank + values
+        # Prior factor 0: should have values [1-0.1, 0.1] = [0.9, 0.1]
+        # Prior factor 1: should have values [1-0.3, 0.3] = [0.7, 0.3]
+        
+        # Find "2" entries for prior factors
+        idx = 0
+        for i, line in enumerate(lines):
+            if line == "" and idx == 0:
+                idx = i + 1
+                break
+        
+        # First prior factor
+        assert lines[idx] == "2"
+        assert float(lines[idx + 1]) == pytest.approx(0.9)
+        assert float(lines[idx + 2]) == pytest.approx(0.1)
+
+    def test_constraint_factors_syndrome_zero(self):
+        """Test constraint factors when syndrome is 0 (even parity required)."""
+        H = np.array([[1, 1]], dtype=np.uint8)  # 1 detector, 2 errors
+        priors = np.array([0.1, 0.1])
+        syndrome = np.array([0], dtype=np.uint8)  # Even parity required
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        # Constraint factor for detector 0 should have:
+        # - 00 (parity 0) -> 1.0
+        # - 01 (parity 1) -> 1e-30
+        # - 10 (parity 1) -> 1e-30
+        # - 11 (parity 0) -> 1.0
+        assert "1.0" in uai_str
+        assert "1e-30" in uai_str
+
+    def test_constraint_factors_syndrome_one(self):
+        """Test constraint factors when syndrome is 1 (odd parity required)."""
+        H = np.array([[1, 1]], dtype=np.uint8)  # 1 detector, 2 errors
+        priors = np.array([0.1, 0.1])
+        syndrome = np.array([1], dtype=np.uint8)  # Odd parity required
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        # Constraint factor should enforce odd parity
+        # - 00 (parity 0) -> 1e-30
+        # - 01 (parity 1) -> 1.0
+        # - 10 (parity 1) -> 1.0
+        # - 11 (parity 0) -> 1e-30
+        assert "1.0" in uai_str
+        assert "1e-30" in uai_str
+
+    def test_empty_detector(self):
+        """Test handling of detectors with no connected errors."""
+        # Detector 1 has no connected errors
+        H = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+        priors = np.array([0.1, 0.1])
+        
+        # Empty detector with syndrome 0 should be satisfiable
+        syndrome_zero = np.array([0, 0], dtype=np.uint8)
+        uai_str_zero = build_decoding_uai(H, priors, syndrome_zero)
+        assert "1" in uai_str_zero  # Factor with single entry
+        
+        # Empty detector with syndrome 1 should be unsatisfiable
+        syndrome_one = np.array([0, 1], dtype=np.uint8)
+        uai_str_one = build_decoding_uai(H, priors, syndrome_one)
+        # Both should produce valid UAI format
+        assert uai_str_one.startswith("MARKOV")
+
+    def test_real_surface_code(self):
+        """Test build_decoding_uai with real surface code data."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+        H, priors, obs_flip = build_parity_check_matrix(dem)
+
+        # Sample a syndrome
+        sampler = circuit.compile_detector_sampler()
+        samples = sampler.sample(1, append_observables=True)
+        syndrome = samples[0, :-1].astype(np.uint8)
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        # Verify structure
+        lines = uai_str.strip().split("\n")
+        assert lines[0] == "MARKOV"
+        
+        n_errors = H.shape[1]
+        n_detectors = H.shape[0]
+        assert lines[1] == str(n_errors)
+        
+        # Number of factors = n_errors (priors) + n_detectors (constraints)
+        n_factors = n_errors + n_detectors
+        assert lines[3] == str(n_factors)
