@@ -8,21 +8,20 @@ import tempfile
 import numpy as np
 import pytest
 import stim
+import torch
 
 from bpdecoderplus.circuit import generate_circuit
 from bpdecoderplus.dem import (
     _split_error_by_separator,
+    build_decoding_uai,
     build_parity_check_matrix,
-    dem_to_dict,
-    dem_to_uai,
     extract_dem,
     generate_dem_from_circuit,
-    generate_uai_from_circuit,
     load_dem,
     save_dem,
-    save_dem_json,
-    save_uai,
 )
+from bpdecoderplus.batch_bp import BatchBPDecoder
+from bpdecoderplus.batch_osd import BatchOSDDecoder
 
 
 class TestExtractDem:
@@ -84,59 +83,6 @@ class TestLoadDem:
 
             assert loaded_dem.num_detectors == dem.num_detectors
             assert loaded_dem.num_observables == dem.num_observables
-
-
-class TestDemToDict:
-    """Tests for dem_to_dict function."""
-
-    def test_basic_conversion(self):
-        """Test converting DEM to dictionary."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-        dem = extract_dem(circuit)
-
-        dem_dict = dem_to_dict(dem)
-
-        assert "num_detectors" in dem_dict
-        assert "num_observables" in dem_dict
-        assert "num_errors" in dem_dict
-        assert "errors" in dem_dict
-        assert dem_dict["num_detectors"] == dem.num_detectors
-        assert dem_dict["num_observables"] == dem.num_observables
-
-    def test_error_structure(self):
-        """Test error structure in dictionary."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-        dem = extract_dem(circuit)
-
-        dem_dict = dem_to_dict(dem)
-
-        assert len(dem_dict["errors"]) > 0
-        first_error = dem_dict["errors"][0]
-        assert "probability" in first_error
-        assert "detectors" in first_error
-        assert "observables" in first_error
-
-
-class TestSaveDemJson:
-    """Tests for save_dem_json function."""
-
-    def test_save_json(self):
-        """Test saving DEM as JSON."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-        dem = extract_dem(circuit)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = pathlib.Path(tmpdir) / "test.json"
-            save_dem_json(dem, output_path)
-
-            assert output_path.exists()
-
-            import json
-            with open(output_path) as f:
-                data = json.load(f)
-
-            assert "num_detectors" in data
-            assert "errors" in data
 
 
 class TestBuildParityCheckMatrix:
@@ -234,79 +180,6 @@ class TestGenerateDemFromCircuit:
             dem_path = generate_dem_from_circuit(circuit_path, decompose_errors=False)
 
             assert dem_path.exists()
-
-
-class TestDemToUai:
-    """Tests for dem_to_uai function."""
-
-    def test_basic_conversion(self):
-        """Test basic DEM to UAI conversion."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-        dem = extract_dem(circuit)
-        uai_str = dem_to_uai(dem)
-
-        assert isinstance(uai_str, str)
-        assert "MARKOV" in uai_str
-        assert str(dem.num_detectors) in uai_str
-
-    def test_uai_format_structure(self):
-        """Test UAI format has correct structure."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-        dem = extract_dem(circuit)
-        uai_str = dem_to_uai(dem)
-
-        lines = uai_str.strip().split("\n")
-        assert lines[0] == "MARKOV"
-        assert int(lines[1]) == dem.num_detectors
-        assert len(lines[2].split()) == dem.num_detectors
-
-
-class TestSaveUai:
-    """Tests for save_uai function."""
-
-    def test_save_uai(self):
-        """Test saving UAI file."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-        dem = extract_dem(circuit)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            uai_path = pathlib.Path(tmpdir) / "test.uai"
-            save_uai(dem, uai_path)
-
-            assert uai_path.exists()
-            content = uai_path.read_text()
-            assert "MARKOV" in content
-
-
-class TestGenerateUaiFromCircuit:
-    """Tests for generate_uai_from_circuit function."""
-
-    def test_generate_from_file(self):
-        """Test generating UAI from circuit file."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            circuit_path = pathlib.Path(tmpdir) / "test.stim"
-            circuit_path.write_text(str(circuit))
-
-            uai_path = generate_uai_from_circuit(circuit_path)
-
-            assert uai_path.exists()
-            assert uai_path.suffix == ".uai"
-
-    def test_custom_output_path(self):
-        """Test generating UAI with custom output path."""
-        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            circuit_path = pathlib.Path(tmpdir) / "test.stim"
-            circuit_path.write_text(str(circuit))
-
-            custom_output = pathlib.Path(tmpdir) / "custom.uai"
-            uai_path = generate_uai_from_circuit(circuit_path, output_path=custom_output)
-
-            assert uai_path == custom_output
-            assert uai_path.exists()
 
 
 class TestSplitErrorBySeparator:
@@ -569,3 +442,269 @@ class TestHyperedgeMerging:
         # With merging: 2 columns (D0 errors merged, D1 errors merged)
         H_merged, _, _ = build_parity_check_matrix(dem, merge_hyperedges=True)
         assert H_merged.shape[1] == 2
+
+
+class TestMergedMatrixModeThreshold:
+    """Test that merged matrix mode (split_by_separator=True, merge_hyperedges=True)
+    produces correct decoding behavior: logical error rate decreases with distance
+    at low physical error rates.
+    
+    This validates the correctness of the matrix construction mode changes.
+    """
+
+    def _compute_observable_prediction_soft(self, solution: np.ndarray, obs_flip: np.ndarray) -> int:
+        """
+        Compute observable prediction using soft XOR probability chain.
+        
+        When hyperedges are merged, obs_flip stores conditional probabilities.
+        This function computes P(odd number of observable flips).
+        """
+        p_flip = 0.0
+        for i in range(len(solution)):
+            if solution[i] == 1:
+                p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+        return int(p_flip > 0.5)
+
+    def _run_bposd_decoder(self, H, syndromes, observables, obs_flip, priors,
+                           osd_order=10, max_iter=30):
+        """Run BP+OSD decoder and return logical error rate."""
+        bp_decoder = BatchBPDecoder(H, priors, device='cpu')
+        osd_decoder = BatchOSDDecoder(H, device='cpu')
+
+        batch_syndromes = torch.from_numpy(syndromes).float()
+        marginals = bp_decoder.decode(batch_syndromes, max_iter=max_iter, damping=0.2)
+
+        errors = 0
+        for i in range(len(syndromes)):
+            probs = marginals[i].cpu().numpy()
+            solution = osd_decoder.solve(syndromes[i], probs, osd_order=osd_order)
+            predicted_obs = self._compute_observable_prediction_soft(solution, obs_flip)
+            if predicted_obs != observables[i]:
+                errors += 1
+
+        return errors / len(syndromes)
+
+    @pytest.mark.slow
+    def test_ler_decreases_with_distance_merged_mode(self):
+        """
+        Test that logical error rate decreases with code distance below threshold.
+        
+        The circuit-level depolarizing noise threshold for rotated surface code 
+        is ~0.7% (0.007). At p=0.005 (below threshold), we expect the logical 
+        error rate to decrease as code distance increases from d=3 to d=5.
+        
+        This test uses the "merged" matrix mode:
+        - split_by_separator=True: correctly handles ^ separators in DEM
+        - merge_hyperedges=True: merges identical detector patterns for efficiency
+        """
+        p = 0.005  # Below threshold (~0.007), LER should decrease with distance
+        num_shots = 1000  # Number of syndrome samples
+        
+        lers = {}
+        
+        for distance in [3, 5]:
+            rounds = distance  # Standard: rounds = distance
+            
+            # Generate circuit and DEM
+            circuit = generate_circuit(distance=distance, rounds=rounds, p=p, task="z")
+            dem = extract_dem(circuit)
+            
+            # Build parity check matrix with merged mode
+            H, priors, obs_flip = build_parity_check_matrix(
+                dem, 
+                split_by_separator=True, 
+                merge_hyperedges=True
+            )
+            
+            # Sample syndromes
+            sampler = circuit.compile_detector_sampler()
+            detection_events, observable_flips = sampler.sample(
+                num_shots, separate_observables=True
+            )
+            syndromes = detection_events.astype(np.uint8)
+            observables = observable_flips.flatten().astype(np.uint8)
+            
+            # Run decoder
+            ler = self._run_bposd_decoder(
+                H, syndromes, observables, obs_flip, priors,
+                osd_order=10, max_iter=30
+            )
+            lers[distance] = ler
+            
+            print(f"\nd={distance}: H shape={H.shape}, LER={ler:.4f} ({num_shots} shots)")
+        
+        # Verify LER decreases with distance below threshold
+        print(f"\nLER comparison at p={p}: d=3: {lers[3]:.4f}, d=5: {lers[5]:.4f}")
+        
+        # The key assertion: at p < threshold, larger distance should have lower LER
+        # Allow small tolerance for statistical fluctuations
+        assert lers[5] <= lers[3] + 0.02, (
+            f"Expected LER to decrease with distance at p={p} (below threshold 0.007), "
+            f"but got d=3: {lers[3]:.4f}, d=5: {lers[5]:.4f}. "
+            f"This may indicate a problem with matrix construction mode."
+        )
+
+
+class TestBuildParityCheckMatrixEdgeCases:
+    """Tests for edge cases in build_parity_check_matrix."""
+
+    def test_zero_probability_errors_skipped(self):
+        """Test that zero-probability errors are skipped in hyperedge merging."""
+        # Create DEM with a zero-probability error
+        dem_str = """
+        error(0.1) D0
+        error(0.0) D1
+        error(0.2) D0
+        """
+        dem = stim.DetectorErrorModel(dem_str)
+
+        H, priors, obs_flip = build_parity_check_matrix(dem, merge_hyperedges=True)
+
+        # Zero-probability error should be skipped, D0 errors merged
+        # D1 error has prob 0, so only D0 column remains
+        assert H.shape[1] == 1
+        # Combined probability for D0: 0.1 + 0.2 - 2*0.1*0.2 = 0.26
+        expected_prob = 0.1 + 0.2 - 2 * 0.1 * 0.2
+        assert np.isclose(priors[0], expected_prob)
+
+    def test_no_split_by_separator_mode(self):
+        """Test build_parity_check_matrix with split_by_separator=False and merge_hyperedges=True."""
+        # This tests the else branch in _build_parity_check_matrix_hyperedge
+        dem_str = """
+        error(0.1) D0 ^ D1
+        error(0.2) D0
+        """
+        dem = stim.DetectorErrorModel(dem_str)
+
+        # With split_by_separator=False, ^ is ignored, so D0^D1 and D0 have different patterns
+        H, priors, obs_flip = build_parity_check_matrix(
+            dem, split_by_separator=False, merge_hyperedges=True
+        )
+
+        # Should have 2 columns: one for D0 D1 (merged), one for D0
+        assert H.shape[1] == 2
+
+
+class TestBuildDecodingUAI:
+    """Tests for build_decoding_uai function.
+    
+    This function builds a UAI factor graph for MAP decoding from a parity
+    check matrix, priors, and syndrome.
+    """
+
+    def test_basic_uai_structure(self):
+        """Test that UAI output has correct structure."""
+        # Simple 2x3 matrix: 2 detectors, 3 errors
+        H = np.array([[1, 1, 0], [0, 1, 1]], dtype=np.uint8)
+        priors = np.array([0.1, 0.2, 0.15])
+        syndrome = np.array([1, 0], dtype=np.uint8)
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        lines = uai_str.strip().split("\n")
+        
+        # Check header
+        assert lines[0] == "MARKOV"
+        assert lines[1] == "3"  # 3 variables (errors)
+        assert lines[2] == "2 2 2"  # All binary
+        assert lines[3] == "5"  # 3 prior factors + 2 constraint factors
+
+    def test_prior_factors(self):
+        """Test that prior factors have correct values."""
+        H = np.array([[1, 0], [0, 1]], dtype=np.uint8)
+        priors = np.array([0.1, 0.3])
+        syndrome = np.array([0, 0], dtype=np.uint8)
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+        lines = uai_str.strip().split("\n")
+
+        # Find factor values section (after scopes)
+        # Structure: header (4 lines) + scopes (4 lines: 2 prior + 2 constraint) + blank + values
+        # Prior factor 0: should have values [1-0.1, 0.1] = [0.9, 0.1]
+        # Prior factor 1: should have values [1-0.3, 0.3] = [0.7, 0.3]
+        
+        # Find "2" entries for prior factors
+        idx = 0
+        for i, line in enumerate(lines):
+            if line == "" and idx == 0:
+                idx = i + 1
+                break
+        
+        # First prior factor
+        assert lines[idx] == "2"
+        assert float(lines[idx + 1]) == pytest.approx(0.9)
+        assert float(lines[idx + 2]) == pytest.approx(0.1)
+
+    def test_constraint_factors_syndrome_zero(self):
+        """Test constraint factors when syndrome is 0 (even parity required)."""
+        H = np.array([[1, 1]], dtype=np.uint8)  # 1 detector, 2 errors
+        priors = np.array([0.1, 0.1])
+        syndrome = np.array([0], dtype=np.uint8)  # Even parity required
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        # Constraint factor for detector 0 should have:
+        # - 00 (parity 0) -> 1.0
+        # - 01 (parity 1) -> 1e-30
+        # - 10 (parity 1) -> 1e-30
+        # - 11 (parity 0) -> 1.0
+        assert "1.0" in uai_str
+        assert "1e-30" in uai_str
+
+    def test_constraint_factors_syndrome_one(self):
+        """Test constraint factors when syndrome is 1 (odd parity required)."""
+        H = np.array([[1, 1]], dtype=np.uint8)  # 1 detector, 2 errors
+        priors = np.array([0.1, 0.1])
+        syndrome = np.array([1], dtype=np.uint8)  # Odd parity required
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        # Constraint factor should enforce odd parity
+        # - 00 (parity 0) -> 1e-30
+        # - 01 (parity 1) -> 1.0
+        # - 10 (parity 1) -> 1.0
+        # - 11 (parity 0) -> 1e-30
+        assert "1.0" in uai_str
+        assert "1e-30" in uai_str
+
+    def test_empty_detector(self):
+        """Test handling of detectors with no connected errors."""
+        # Detector 1 has no connected errors
+        H = np.array([[1, 1], [0, 0]], dtype=np.uint8)
+        priors = np.array([0.1, 0.1])
+        
+        # Empty detector with syndrome 0 should be satisfiable
+        syndrome_zero = np.array([0, 0], dtype=np.uint8)
+        uai_str_zero = build_decoding_uai(H, priors, syndrome_zero)
+        assert "1" in uai_str_zero  # Factor with single entry
+        
+        # Empty detector with syndrome 1 should be unsatisfiable
+        syndrome_one = np.array([0, 1], dtype=np.uint8)
+        uai_str_one = build_decoding_uai(H, priors, syndrome_one)
+        # Both should produce valid UAI format
+        assert uai_str_one.startswith("MARKOV")
+
+    def test_real_surface_code(self):
+        """Test build_decoding_uai with real surface code data."""
+        circuit = generate_circuit(distance=3, rounds=3, p=0.01, task="z")
+        dem = extract_dem(circuit)
+        H, priors, obs_flip = build_parity_check_matrix(dem)
+
+        # Sample a syndrome
+        sampler = circuit.compile_detector_sampler()
+        samples = sampler.sample(1, append_observables=True)
+        syndrome = samples[0, :-1].astype(np.uint8)
+
+        uai_str = build_decoding_uai(H, priors, syndrome)
+
+        # Verify structure
+        lines = uai_str.strip().split("\n")
+        assert lines[0] == "MARKOV"
+        
+        n_errors = H.shape[1]
+        n_detectors = H.shape[0]
+        assert lines[1] == str(n_errors)
+        
+        # Number of factors = n_errors (priors) + n_detectors (constraints)
+        n_factors = n_errors + n_detectors
+        assert lines[3] == str(n_factors)

@@ -1,15 +1,13 @@
 """
 Detector Error Model (DEM) extraction module for noisy circuits.
 
-This module provides functions to extract and save Detector Error Models
-from Stim circuits for use in decoder implementations.
+This module provides functions to extract and process Detector Error Models
+from Stim circuits for use in decoder implementations and threshold analysis.
 """
 
 from __future__ import annotations
 
-import json
 import pathlib
-from typing import Any
 
 import numpy as np
 import stim
@@ -115,57 +113,6 @@ def _split_error_by_separator(targets: list) -> list[dict]:
         })
 
     return components
-
-
-def dem_to_dict(dem: stim.DetectorErrorModel) -> dict[str, Any]:
-    """
-    Convert DEM to dictionary with structured information.
-
-    Handles ^ separators by splitting each error instruction into
-    separate components (see _split_error_by_separator).
-
-    Args:
-        dem: Detector Error Model to convert.
-
-    Returns:
-        Dictionary with DEM statistics and error information.
-    """
-    errors = []
-    for inst in dem.flattened():
-        if inst.type == "error":
-            prob = inst.args_copy()[0]
-            targets = inst.targets_copy()
-
-            # Split by ^ separator - each component becomes a separate error
-            for comp in _split_error_by_separator(targets):
-                errors.append({
-                    "probability": float(prob),
-                    "detectors": comp["detectors"],
-                    "observables": comp["observables"],
-                })
-
-    return {
-        "num_detectors": dem.num_detectors,
-        "num_observables": dem.num_observables,
-        "num_errors": len(errors),
-        "errors": errors,
-    }
-
-
-def save_dem_json(
-    dem: stim.DetectorErrorModel,
-    output_path: pathlib.Path,
-) -> None:
-    """
-    Save DEM as JSON for easier analysis.
-
-    Args:
-        dem: Detector Error Model to save.
-        output_path: Path to save the JSON file.
-    """
-    dem_dict = dem_to_dict(dem)
-    with open(output_path, "w") as f:
-        json.dump(dem_dict, f, indent=2)
 
 
 def build_parity_check_matrix(
@@ -392,66 +339,87 @@ def _build_parity_check_matrix_hyperedge(
     return H, priors, obs_flip
 
 
-def dem_to_uai(dem: stim.DetectorErrorModel) -> str:
+def build_decoding_uai(
+    H: np.ndarray,
+    priors: np.ndarray,
+    syndrome: np.ndarray,
+) -> str:
     """
-    Convert DEM to UAI format for probabilistic inference.
+    Build UAI model string for MAP decoding from parity check matrix.
 
-    Handles ^ separators by splitting each error into separate factors.
+    Creates a factor graph where:
+    - Variables = error bits (columns of H)
+    - Prior factors = error probabilities
+    - Constraint factors = syndrome parity checks
 
     Args:
-        dem: Detector Error Model to convert.
+        H: Parity check matrix, shape (n_detectors, n_errors)
+        priors: Prior error probabilities, shape (n_errors,)
+        syndrome: Binary syndrome, shape (n_detectors,)
 
     Returns:
-        String in UAI format representing the factor graph.
+        UAI format string for MAP decoding.
     """
-    errors = []
-    for inst in dem.flattened():
-        if inst.type == "error":
-            prob = inst.args_copy()[0]
-            targets = inst.targets_copy()
+    n_detectors, n_errors = H.shape
 
-            # Split by ^ separator - each component becomes a separate factor
-            for comp in _split_error_by_separator(targets):
-                errors.append({"prob": prob, "detectors": comp["detectors"]})
-
-    n_detectors = dem.num_detectors
     lines = []
-    lines.append("MARKOV")
-    lines.append(str(n_detectors))
-    lines.append(" ".join(["2"] * n_detectors))
-    lines.append(str(len(errors)))
 
-    for e in errors:
-        dets = e["detectors"]
-        lines.append(f"{len(dets)} " + " ".join(map(str, dets)))
+    # UAI header
+    lines.append("MARKOV")
+    lines.append(str(n_errors))
+    lines.append(" ".join(["2"] * n_errors))
+
+    # Count factors: n_errors prior factors + n_detectors constraint factors
+    n_factors = n_errors + n_detectors
+    lines.append(str(n_factors))
+
+    # Factor scopes
+    # Prior factors (each covers one error variable)
+    for i in range(n_errors):
+        lines.append(f"1 {i}")
+
+    # Constraint factors (each covers errors connected to a detector)
+    for d in range(n_detectors):
+        error_indices = np.where(H[d, :] == 1)[0]
+        n_vars = len(error_indices)
+        if n_vars > 0:
+            scope_str = " ".join(str(e) for e in error_indices)
+            lines.append(f"{n_vars} {scope_str}")
+        else:
+            lines.append("0")
 
     lines.append("")
-    for e in errors:
-        n_dets = len(e["detectors"])
-        n_entries = 2 ** n_dets
-        lines.append(str(n_entries))
 
-        p = e["prob"]
-        for i in range(n_entries):
-            parity = bin(i).count("1") % 2
-            if parity == 0:
-                lines.append(str(1 - p))
-            else:
-                lines.append(str(p))
+    # Factor values
+    # Prior factors
+    for i in range(n_errors):
+        p = priors[i]
+        lines.append("2")
+        lines.append(str(1.0 - p))
+        lines.append(str(p))
         lines.append("")
 
+    # Constraint factors
+    for d in range(n_detectors):
+        error_indices = np.where(H[d, :] == 1)[0]
+        n_vars = len(error_indices)
+        if n_vars > 0:
+            syndrome_bit = int(syndrome[d])
+            n_entries = 2**n_vars
+            lines.append(str(n_entries))
+            for i in range(n_entries):
+                parity = bin(i).count("1") % 2
+                if parity == syndrome_bit:
+                    lines.append("1.0")
+                else:
+                    lines.append("1e-30")
+            lines.append("")
+        else:
+            lines.append("1")
+            lines.append("1.0")
+            lines.append("")
+
     return "\n".join(lines)
-
-
-def save_uai(dem: stim.DetectorErrorModel, output_path: pathlib.Path) -> None:
-    """
-    Save DEM as UAI format file.
-
-    Args:
-        dem: Detector Error Model to save.
-        output_path: Path to save the UAI file.
-    """
-    output_path.write_text(dem_to_uai(dem))
 
 
 def generate_dem_from_circuit(
@@ -479,34 +447,5 @@ def generate_dem_from_circuit(
 
     dem = extract_dem(circuit, decompose_errors=decompose_errors)
     save_dem(dem, output_path)
-
-    return output_path
-
-
-def generate_uai_from_circuit(
-    circuit_path: pathlib.Path,
-    output_path: pathlib.Path | None = None,
-    decompose_errors: bool = True,
-) -> pathlib.Path:
-    """
-    Generate and save UAI format file from a circuit file.
-
-    Args:
-        circuit_path: Path to the circuit file (.stim).
-        output_path: Optional output path. If None, uses datasets/uais/ directory.
-        decompose_errors: Whether to decompose errors into components.
-
-    Returns:
-        Path to the saved UAI file.
-    """
-    circuit = stim.Circuit.from_file(str(circuit_path))
-
-    if output_path is None:
-        uais_dir = pathlib.Path("datasets")
-        uais_dir.mkdir(parents=True, exist_ok=True)
-        output_path = uais_dir / circuit_path.with_suffix(".uai").name
-
-    dem = extract_dem(circuit, decompose_errors=decompose_errors)
-    save_uai(dem, output_path)
 
     return output_path

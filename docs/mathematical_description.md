@@ -7,35 +7,53 @@ See https://github.com/TensorBFS/TensorInference.jl for the Julia reference.
 
 ### Factor Graph Notation
 
-- Variables are indexed by x_i with domain size d_i.
-- Factors are indexed by f and connect a subset of variables.
-- Each factor has a tensor (potential) phi_f defined over its variables.
+- Variables are indexed by \(x_i\) with domain size \(d_i\).
+- Factors are indexed by \(f\) and connect a subset of variables.
+- Each factor has a tensor (potential) \(\phi_f\) defined over its variables.
 
 ### Messages
 
-Factor to variable message:
+**Factor to variable message:**
 
-mu_{f->x}(x) = sum_{all y in ne(f), y != x} phi_f(x, y, ...) * product_{y != x} mu_{y->f}(y)
+\[
+\mu_{f \to x}(x) = \sum_{\{y \in \text{ne}(f), y \neq x\}} \phi_f(x, y, \ldots) \prod_{y \neq x} \mu_{y \to f}(y)
+\]
 
-Variable to factor message:
+**Variable to factor message:**
 
-mu_{x->f}(x) = product_{g in ne(x), g != f} mu_{g->x}(x)
+\[
+\mu_{x \to f}(x) = \prod_{g \in \text{ne}(x), g \neq f} \mu_{g \to x}(x)
+\]
 
 ### Damping
 
 To improve stability on loopy graphs, a damping update is applied:
 
-mu_new = damping * mu_old + (1 - damping) * mu_candidate
+\[
+\mu_{\text{new}} = \alpha \cdot \mu_{\text{old}} + (1 - \alpha) \cdot \mu_{\text{candidate}}
+\]
+
+where \(\alpha\) is the damping factor (typically between 0 and 1).
 
 ### Convergence
 
-We use an L1 difference threshold between consecutive factor->variable
-messages to determine convergence.
+We use an \(L_1\) difference threshold between consecutive factor-to-variable
+messages to determine convergence:
+
+\[
+\max_{f,x} \| \mu_{f \to x}^{(t)} - \mu_{f \to x}^{(t-1)} \|_1 < \epsilon
+\]
 
 ### Marginals
 
 After convergence, variable marginals are computed as:
 
-b(x) = (1 / Z) * product_{f in ne(x)} mu_{f->x}(x)
+\[
+b(x) = \frac{1}{Z} \prod_{f \in \text{ne}(x)} \mu_{f \to x}(x)
+\]
 
-The normalization constant Z is obtained by summing the unnormalized vector.
+The normalization constant \(Z\) is obtained by summing the unnormalized vector:
+
+\[
+Z = \sum_x \prod_{f \in \text{ne}(x)} \mu_{f \to x}(x)
+\]

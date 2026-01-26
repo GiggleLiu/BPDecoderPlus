@@ -15,7 +15,7 @@ from bpdecoderplus.circuit import (
     run_smoke_test,
     write_circuit,
 )
-from bpdecoderplus.dem import generate_dem_from_circuit, generate_uai_from_circuit
+from bpdecoderplus.dem import generate_dem_from_circuit
 from bpdecoderplus.syndrome import generate_syndrome_database_from_circuit
 
 
@@ -76,11 +76,6 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Generate detector error model (.dem file)",
     )
-    parser.add_argument(
-        "--generate-uai",
-        action="store_true",
-        help="Generate UAI format file for probabilistic inference",
-    )
     return parser
 
 
@@ -132,11 +127,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.generate_dem:
             dem_path = generate_dem_from_circuit(output_path)
             print(f"Wrote {dem_path}")
-
-        # Generate UAI if requested
-        if args.generate_uai:
-            uai_path = generate_uai_from_circuit(output_path)
-            print(f"Wrote {uai_path}")
 
         # Generate syndrome database if requested
         if args.generate_syndromes:

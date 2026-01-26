@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 import torch
 
@@ -9,6 +10,7 @@ except ImportError:
 add_project_root_to_path()
 
 from bpdecoderplus.pytorch_bp import read_model_from_string, read_evidence_file
+from bpdecoderplus.pytorch_bp.uai_parser import Factor, UAIModel
 
 
 class TestUAIParser(unittest.TestCase):
@@ -97,6 +99,47 @@ class TestUAIParser(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             read_model_from_string(content)
+
+    def test_factor_repr(self):
+        """Test Factor __repr__ method."""
+        values = torch.tensor([0.5, 0.5])
+        factor = Factor(vars=[1], values=values)
+        repr_str = repr(factor)
+        self.assertIn("Factor", repr_str)
+        self.assertIn("vars=(1,)", repr_str)
+        self.assertIn("shape=", repr_str)
+
+    def test_uai_model_repr(self):
+        """Test UAIModel __repr__ method."""
+        factor = Factor(vars=[1], values=torch.tensor([0.5, 0.5]))
+        model = UAIModel(nvars=1, cards=[2], factors=[factor])
+        repr_str = repr(model)
+        self.assertIn("UAIModel", repr_str)
+        self.assertIn("nvars=1", repr_str)
+        self.assertIn("nfactors=1", repr_str)
+
+    def test_read_evidence_empty_filepath(self):
+        """Test read_evidence_file with empty filepath."""
+        evidence = read_evidence_file("")
+        self.assertEqual(evidence, {})
+
+    def test_read_evidence_none_filepath(self):
+        """Test read_evidence_file with None filepath."""
+        evidence = read_evidence_file(None)
+        self.assertEqual(evidence, {})
+
+    def test_read_evidence_empty_file(self):
+        """Test read_evidence_file with empty file."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.evid', delete=False) as f:
+            f.write("")
+            temp_path = f.name
+        
+        try:
+            evidence = read_evidence_file(temp_path)
+            self.assertEqual(evidence, {})
+        finally:
+            import os
+            os.unlink(temp_path)
 
 
 if __name__ == "__main__":
