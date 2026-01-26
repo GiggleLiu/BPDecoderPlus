@@ -131,6 +131,45 @@ class TestLoadSyndromeDatabase:
 
             assert loaded_metadata == metadata
 
+    def test_load_metadata_0dim_array(self):
+        """Test loading metadata stored as 0-dimensional array."""
+        syndromes = np.random.randint(0, 2, size=(10, 24), dtype=np.uint8)
+        observables = np.random.randint(0, 2, size=10, dtype=np.uint8)
+        metadata = {"test": "value"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "test.npz"
+            # Save with 0-dim array (using np.array(json_str))
+            import json
+            np.savez(
+                output_path,
+                syndromes=syndromes,
+                observables=observables,
+                metadata=np.array(json.dumps(metadata))  # 0-dim array
+            )
+
+            _, _, loaded_metadata = load_syndrome_database(output_path)
+            assert loaded_metadata == metadata
+
+    def test_load_metadata_dict_directly(self):
+        """Test loading metadata stored as pickled dict."""
+        syndromes = np.random.randint(0, 2, size=(10, 24), dtype=np.uint8)
+        observables = np.random.randint(0, 2, size=10, dtype=np.uint8)
+        metadata = {"test": "value", "number": 42}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = pathlib.Path(tmpdir) / "test.npz"
+            # Save with allow_pickle and dict directly
+            np.savez(
+                output_path,
+                syndromes=syndromes,
+                observables=observables,
+                metadata=np.array([metadata], dtype=object)  # 1-dim with dict
+            )
+
+            _, _, loaded_metadata = load_syndrome_database(output_path)
+            assert loaded_metadata == metadata
+
 
 class TestGenerateSyndromeDatabaseFromCircuit:
     """Tests for generate_syndrome_database_from_circuit function."""

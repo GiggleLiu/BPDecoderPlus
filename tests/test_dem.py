@@ -545,6 +545,46 @@ class TestMergedMatrixModeThreshold:
         )
 
 
+class TestBuildParityCheckMatrixEdgeCases:
+    """Tests for edge cases in build_parity_check_matrix."""
+
+    def test_zero_probability_errors_skipped(self):
+        """Test that zero-probability errors are skipped in hyperedge merging."""
+        # Create DEM with a zero-probability error
+        dem_str = """
+        error(0.1) D0
+        error(0.0) D1
+        error(0.2) D0
+        """
+        dem = stim.DetectorErrorModel(dem_str)
+
+        H, priors, obs_flip = build_parity_check_matrix(dem, merge_hyperedges=True)
+
+        # Zero-probability error should be skipped, D0 errors merged
+        # D1 error has prob 0, so only D0 column remains
+        assert H.shape[1] == 1
+        # Combined probability for D0: 0.1 + 0.2 - 2*0.1*0.2 = 0.26
+        expected_prob = 0.1 + 0.2 - 2 * 0.1 * 0.2
+        assert np.isclose(priors[0], expected_prob)
+
+    def test_no_split_by_separator_mode(self):
+        """Test build_parity_check_matrix with split_by_separator=False and merge_hyperedges=True."""
+        # This tests the else branch in _build_parity_check_matrix_hyperedge
+        dem_str = """
+        error(0.1) D0 ^ D1
+        error(0.2) D0
+        """
+        dem = stim.DetectorErrorModel(dem_str)
+
+        # With split_by_separator=False, ^ is ignored, so D0^D1 and D0 have different patterns
+        H, priors, obs_flip = build_parity_check_matrix(
+            dem, split_by_separator=False, merge_hyperedges=True
+        )
+
+        # Should have 2 columns: one for D0 D1 (merged), one for D0
+        assert H.shape[1] == 2
+
+
 class TestBuildDecodingUAI:
     """Tests for build_decoding_uai function.
     

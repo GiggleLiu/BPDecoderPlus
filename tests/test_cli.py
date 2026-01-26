@@ -113,3 +113,70 @@ class TestMain:
                 "-p", "0.01",
             ])
             assert result == 0
+
+    def test_generate_dem(self):
+        """Test generation with --generate-dem flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = main([
+                "-o", tmpdir,
+                "-d", "3",
+                "-r", "3",
+                "-p", "0.01",
+                "--generate-dem",
+                "--no-smoke-test",
+            ])
+            assert result == 0
+
+            # Circuit file should be in tmpdir
+            circuit_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0100_z.stim"
+            assert circuit_file.exists()
+            
+            # DEM file is generated in datasets/ directory by default
+            # (generate_dem_from_circuit uses its own default output)
+            dem_file = pathlib.Path("datasets") / "sc_d3_r3_p0100_z.dem"
+            assert dem_file.exists()
+
+    def test_generate_syndromes(self):
+        """Test generation with --generate-syndromes flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = main([
+                "-o", tmpdir,
+                "-d", "3",
+                "-r", "3",
+                "-p", "0.01",
+                "--generate-syndromes", "100",
+                "--no-smoke-test",
+            ])
+            assert result == 0
+
+            # Circuit file should be in tmpdir
+            circuit_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0100_z.stim"
+            assert circuit_file.exists()
+            
+            # Syndrome file is generated in datasets/syndromes/ by default
+            syndrome_file = pathlib.Path("datasets/syndromes") / "sc_d3_r3_p0100_z.npz"
+            assert syndrome_file.exists()
+
+    def test_generate_all(self):
+        """Test generation with both --generate-dem and --generate-syndromes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = main([
+                "-o", tmpdir,
+                "-d", "3",
+                "-r", "3",
+                "-p", "0.01",
+                "--generate-dem",
+                "--generate-syndromes", "50",
+                "--no-smoke-test",
+            ])
+            assert result == 0
+
+            # Circuit file in tmpdir
+            circuit_file = pathlib.Path(tmpdir) / "sc_d3_r3_p0100_z.stim"
+            assert circuit_file.exists()
+            
+            # DEM and syndrome files in their default locations
+            dem_file = pathlib.Path("datasets") / "sc_d3_r3_p0100_z.dem"
+            syndrome_file = pathlib.Path("datasets/syndromes") / "sc_d3_r3_p0100_z.npz"
+            assert dem_file.exists()
+            assert syndrome_file.exists()
