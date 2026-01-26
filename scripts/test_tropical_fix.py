@@ -68,8 +68,15 @@ def build_uai(H, priors, syndrome):
                     lines.append("1e-30")
             lines.append("")
         else:
+            # Empty detector: probability depends on whether the syndrome is consistent.
+            # If syndrome[d] == 0, the constraint is satisfied (probability 1.0).
+            # If syndrome[d] != 0, the constraint is unsatisfiable (near-zero probability).
+            syndrome_bit = int(syndrome[d])
             lines.append("1")
-            lines.append("1.0")
+            if syndrome_bit == 0:
+                lines.append("1.0")
+            else:
+                lines.append("1e-30")
             lines.append("")
 
     return "\n".join(lines)

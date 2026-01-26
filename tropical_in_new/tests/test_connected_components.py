@@ -4,7 +4,6 @@ These tests verify that the tropical TN correctly handles factor graphs with
 disconnected components, which was a bug fix for Issue #68.
 """
 
-import pytest
 import torch
 
 from tropical_in_new.src.contraction import (

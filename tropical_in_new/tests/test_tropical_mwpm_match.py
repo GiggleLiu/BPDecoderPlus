@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import numpy as np
 import pytest
 import stim
-import torch
 
 from bpdecoderplus.dem import build_parity_check_matrix
 
@@ -194,7 +193,6 @@ class TestTropicalMatchesMWPM:
         sampler = circuit.compile_detector_sampler()
         samples = sampler.sample(50, append_observables=True)
         syndromes = samples[:, :-1].astype(np.uint8)
-        observables = samples[:, -1].astype(np.int32)
 
         # MWPM decode
         mwpm_preds = matcher.decode_batch(syndromes)
