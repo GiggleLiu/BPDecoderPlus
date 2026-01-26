@@ -475,7 +475,7 @@ The BP+OSD decoder achieves near-MWPM performance while being more scalable to l
 1. **Generate your first dataset** using the Quick Start command
 2. **Explore the data** by loading the .npz file and examining syndromes
 3. **Experiment with different parameters** (distance, rounds, noise rate)
-4. **Wait for BP decoder implementation** to evaluate decoder performance
+4. **Try the BP+OSD decoder** to evaluate decoder performance on your data
 
 ## References
 
