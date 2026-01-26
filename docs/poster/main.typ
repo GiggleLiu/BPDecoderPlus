@@ -34,7 +34,7 @@ Our implementation correctly resolves the circuit-level error threshold at $appr
 
   #pop.column-box(heading: "Rotated Surface Code")[
 #grid(columns: 2, gutter: 20pt,
-canvas(length: 5cm, {
+canvas(length: 2cm, {
   import draw: *
   surface-code((0, 0), size: 2.5, 3, 3, name: "sc")
 }),
@@ -89,20 +89,77 @@ canvas(length: 1.2cm, {
 }),
 box[
   *Message passing:*
-  $ mu_(v arrow f) = product_(f' in N(v) \\ f) mu_(f' arrow v) $
-  $ mu_(f arrow v) = sum_(bold(x): x_v = 0,1) psi_f (bold(x)) product_(v' in N(f) \\ v) mu_(v' arrow f) $
+  $ mu_(v arrow f) = product_(f' in N(v) \\ f) mu_(f' arrow v), mu_(f arrow v) = sum_(bold(x): x_v = 0,1) psi_f (bold(x)) product_(v' in N(f) \\ v) mu_(v' arrow f) $
 ]
 )
 
-*Ordered Statistics Decoding (OSD)* post-processes BP output:
+  #figure(
+    image("../images/bp_failure_demo.png", width: 100%),
+    caption: [BP alone fails due to degeneracy: the decoder outputs an invalid solution that does not satisfy the syndrome.]
+  )
+  *Ordered Statistics Decoding (OSD)* post-processes BP output:
 1. Sort variables by BP reliability
 2. Fix most reliable bits using Gaussian elimination
 3. Exhaustively search remaining bits (OSD-$w$ searches $w$ bits)
 
-#highlight[Key insight: BP provides soft information; OSD provides guaranteed valid codeword.]
+#figure(
+  canvas(length: 2cm, {
+    import draw: *
+
+    // Original matrix
+    rect((-4, -1), (-1, 1), fill: rgb("#f0f0f0"), name: "H")
+    content("H", $H$)
+    content((-2.5, -1.5), text(size: 30pt)[$m times n$])
+
+    // Arrow
+    line((-0.5, 0), (0.5, 0), mark: (end: ">"))
+    content((0, 0.5), text(size: 30pt)[split])
+
+    // Basis submatrix
+    rect((1, -1), (3, 1), fill: rgb("#e0ffe0"), name: "HS")
+    content("HS", $H_([S])$)
+    content((1.75, -1.5), text(size: 30pt)[$m times r$])
+    content((1.75, -2), text(size: 30pt)[invertible!])
+
+    // Remainder submatrix
+    rect((3.5, -1), (5, 1), fill: rgb("#ffe0e0"), name: "HT")
+    content("HT", $H_([T])$)
+    content((4, -1.5), text(size: 30pt)[$m times k'$])
+  }),
+  caption: [Splitting $H$ into basis and remainder parts]
+)
   ]
 
+
 #colbreak()
+
+  #pop.column-box(heading: "BP+OSD Threshold Results")[
+#align(center)[
+  #image("threshold_comparison.png", width: 95%)
+]
+
+#table(
+  columns: 4,
+  align: center,
+  stroke: 0.5pt,
+  table.header([*Noise Model*], [*BP Only*], [*BP+OSD*], [*Optimal*]),
+  [Code capacity], [N/A], [$approx 9.9%$], [$10.3%$],
+  [Circuit-level], [N/A], [$approx 0.7%$], [$approx 1%$],
+)
+
+#grid(columns: 2, gutter: 20pt,
+box[
+  *Configuration:*
+  - BP: 60 iterations, min-sum
+  - Damping: 0.2, OSD order: 10
+],
+box[
+  *Validation:*
+  - Matches ldpc library @Higgott2023
+  - Curves cross at threshold
+]
+)
+  ]
 
   #pop.column-box(heading: "Tropical Tensor Networks for MPE")[
 The *Most Probable Explanation* (MPE) problem finds the most likely error pattern given observations. We solve this exactly using tropical tensor networks.
@@ -132,34 +189,6 @@ $ log P(bold(x)) = sum_f log psi_f (bold(x)_f) $
 - PyTorch backend with GPU support
 - Backtracking recovers the optimal assignment
 - Complexity: $O(2^(text("treewidth")))$
-  ]
-
-  #pop.column-box(heading: "Threshold Results")[
-#align(center)[
-  #image("threshold_comparison.png", width: 95%)
-]
-
-#table(
-  columns: 4,
-  align: center,
-  stroke: 0.5pt,
-  table.header([*Noise Model*], [*BP Only*], [*BP+OSD*], [*Optimal*]),
-  [Code capacity], [N/A], [$approx 9.9%$], [$10.3%$],
-  [Circuit-level], [N/A], [$approx 0.7%$], [$approx 1%$],
-)
-
-#grid(columns: 2, gutter: 20pt,
-box[
-  *Configuration:*
-  - BP: 60 iterations, min-sum
-  - Damping: 0.2, OSD order: 10
-],
-box[
-  *Validation:*
-  - Matches ldpc library @Higgott2023
-  - Curves cross at threshold
-]
-)
   ]
 
   #pop.column-box(heading: "Software Architecture")[

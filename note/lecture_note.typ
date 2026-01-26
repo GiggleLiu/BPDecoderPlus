@@ -4,6 +4,7 @@
 // by Roffe, White, Burton, and Campbell (2020)
 
 #import "@preview/cetz:0.3.2": canvas, draw
+#import "@preview/qec-thrust:0.1.1": *
 
 #set document(title: "BP + OSD Algorithm for Quantum Error Correction")
 #set page(paper: "a4", margin: 2.5cm)
@@ -828,101 +829,22 @@ Putting it all together, one BP iteration consists of:
 
 #pagebreak()
 
-== BP Dynamics: Classical vs. Quantum Constraints
+== Why BP Fails on Quantum Codes
 
-To understand why BP fails on quantum codes, we compare its behavior on a minimal classical graph (2 bits) versus a minimal quantum stabilizer (4 bits).
+=== Signal Dilution in High-Weight Checks
 
-=== Problem Setup: 2-Bit vs. 4-Bit Parity
-
-Consider two scenarios with channel error probability $p=0.1$ and observed syndrome $s=1$ (odd parity): (i). A check node $u_1$ connected to 2 variables $v_1, v_2$ (e.g., a simple parity check).
-(ii). A check node $u_1$ connected to 4 variables $v_1, ..., v_4$ (e.g., a surface code plaquette).
-
-#figure(
-  grid(
-    columns: 2,
-    gutter: 1cm,
-    canvas(length: 1cm, {
-      import draw: *
-      // 2-bit graph
-      circle((-1, 1.5), radius: 0.3, fill: rgb("#e0ffe0"), name: "v1")
-      content("v1", $v_1$)
-      circle((1, 1.5), radius: 0.3, fill: rgb("#e0ffe0"), name: "v2")
-      content("v2", $v_2$)
-      rect((-0.3, -0.3), (0.3, 0.3), fill: rgb("#ffe0e0"), name: "u1")
-      content("u1", $u_1$)
-      line("v1", "u1", stroke: blue)
-      line("v2", "u1", stroke: blue)
-      content((0, -1.1), text(size: 9pt)[*Case A: 2-Bit Check*])
-    }),
-    canvas(length: 1cm, {
-      import draw: *
-      // 4-bit graph
-      circle((-1, 1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v1")
-      content("v1", $v_1$)
-      circle((1, 1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v2")
-      content("v2", $v_2$)
-      circle((1, -1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v3")
-      content("v3", $v_3$)
-      circle((-1, -1), radius: 0.3, fill: rgb("#e0ffe0"), name: "v4")
-      content("v4", $v_4$)
-      rect((-0.3, -0.3), (0.3, 0.3), fill: rgb("#ffe0e0"), name: "u1")
-      content("u1", $u_1$)
-      line("v1", "u1", stroke: blue)
-      line("v2", "u1", stroke: blue)
-      line("v3", "u1", stroke: blue)
-      line("v4", "u1", stroke: blue)
-      content((0, -1.6), text(size: 9pt)[*Case B: 4-Bit Plaquette*])
-    })
-  ),
-  caption: [Comparison of message passing geometry]
-)
-
-Both cases start with the same channel LLR:
-$ "LLR"_"channel" = ln((1-p)/p) = ln(9) approx 2.197. $
-The check node sends a message to $v_1$ based on evidence from *all other* neighbors.
-Formula: $m_(u arrow.r v) = (-1)^s dot 2 tanh^(-1)( product_(v' in N(u) without v) tanh(m_(v' arrow.r u) \/ 2) )$
-
-*Case A (2-Bit): Strong Correction*
-$v_1$ has only 1 neighbor ($v_2$). The product contains a single term $tanh(1.1) approx 0.8$.
-$ m_(u_1 arrow.r v_1) = -2 tanh^(-1)(0.8) approx -2.197 $
-The check says: "My other neighbor is definitely correct, so *you* must be wrong." The message magnitude *matches* the channel prior but flips the sign.
-
-*Case B (4-Bit): Signal Dilution*
-$v_1$ has 3 neighbors ($v_2, v_3, v_4$). The product accumulates uncertainty: $0.8^3 approx 0.512$.
-$ m_(u_1 arrow.r v_1) = -2 tanh^(-1)(0.512) approx -1.13 $
-The check says: "I see an error, but it could be any of you 4. I suspect you, but weakly." The penalty (-1.13) is *weaker* than the channel prior (+2.197).
-
-=== Step 3: Variable Update and Failure
-
-We now compute the updated belief for $v_1$:
+Consider a check node with syndrome $s=1$ and channel error probability $p=0.1$ (LLR $approx 2.2$). The check-to-variable message strength depends on the number of neighbors:
 
 #table(
-  columns: 3,
+  columns: 4,
   align: center,
-  stroke: none,
-  table.header([*Metric*], [*Case A (2-Bit)*], [*Case B (4-Bit)*]),
-  table.hline(),
-  [Prior LLR], [$+2.197$], [$+2.197$],
-  [Check Msg], [$-2.197$], [$-1.13$],
-  [*Net LLR*], [$bold(0)$], [$bold(+1.067)$],
-  [Prob($e_1=1$)], [$50%$], [$approx 26%$],
-  [Hard Decision], [$e_1=0$ or $1$], [$e_1=0$],
+  stroke: 0.5pt,
+  table.header([*Check Weight*], [*Message Strength*], [*Net LLR*], [*Result*]),
+  [2-bit (classical)], [$-2.2$], [$0$], [Correct uncertainty],
+  [4-bit (quantum)], [$-1.1$], [$+1.1$], [*False confidence*],
 )
 
-*Why Quantum BP Fails:*
-1.  *Case A (Classical):* The LLR drops to 0. BP correctly identifies "maximum uncertainty." It knows it cannot distinguish between $e_1$ and $e_2$.
-2.  *Case B (Quantum):* The LLR remains positive ($+1.067$). BP remains "confident" that the bit is correct.
-    - The hard decision outputs $bold(e) = (0,0,0,0)$.
-    - *Parity Check:* $0+0+0+0 = 0 != 1$.
-    - *Result:* BP fails to find a valid solution because the "blame" is diluted across too many qubits.
-
-In a full surface code, this effect compounds. Multiple conflicting checks reduce the LLR toward 0, leading to a state of "Split Belief" where the decoder is paralyzed by symmetry.
-
-#keypoint[
-  *Summary of the Failure Mode:*
-  - *Ambiguity Dilution:* In high-weight stabilizers (like 4-bit plaquettes), the check node message is too weak to overturn the channel prior.
-  - *Invalid Hard Decisions:* Unlike the 2-bit case where uncertainty is explicit ($L=0$), the 4-bit case results in false confidence ($L>0$) that violates the parity constraint.
-]
+With 4-bit plaquettes, the check message is too weak to overturn the channel prior. The hard decision outputs $bold(e) = bold(0)$, which violates the syndrome constraint $0+0+0+0 = 0 != 1$.
 
 === The Degeneracy Problem
 
@@ -934,117 +856,23 @@ In a full surface code, this effect compounds. Multiple conflicting checks reduc
   fill: rgb("#fff5f5"),
   [
     #text(weight: "bold", fill: red)[The Degeneracy Problem]
-    In quantum codes, *multiple distinct error patterns* can be physically equivalent (differing only by a stabilizer).
-    BP, which is designed to find a *unique* correct error, fails to distinguish between these equivalent patterns, leading to decoding failure.
+    
+    In quantum codes, *multiple distinct error patterns* produce the same syndrome and differ only by a stabilizer. BP cannot distinguish between these equivalent patterns.
   ]
 )
 
 #definition[
-  Two errors $bold(e)_1$ and $bold(e)_2$ are *degenerate* if they produce the same syndrome $bold(s)$ and their difference forms a stabilizer:
+  Two errors $bold(e)_1$ and $bold(e)_2$ are *degenerate* if:
   $ H dot bold(e)_1 = H dot bold(e)_2 = bold(s) quad "and" quad bold(e)_1 + bold(e)_2 in "Stabilizers" $
-  
-  Unlike classical codes where distinct low-weight errors are rare, quantum stabilizer codes are *constructed* from local degeneracies (the stabilizers themselves).
 ]
 
-Fro example, consider the Toric code where qubits reside on the edges of a lattice. A stabilizer $B_p$ acts on the 4 qubits surrounding a plaquette.
-The weight-2 error occurs on the *left* edges is degenerate with the weight-2 error on the *right* two edges.
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Define vertices of the plaquette
-    let p1 = (-2, 2)
-    let p2 = (2, 2)
-    let p3 = (2, -2)
-    let p4 = (-2, -2)
-
-    // Draw the stabilizer plaquette background
-    rect((-2, -2), (2, 2), fill: rgb("#f9f9f9"), stroke: (dash: "dashed"))
-    content((0, 0), text(size: 10pt, fill: gray)[Stabilizer $B_p$])
-
-    // Vertices (Checks)
-    circle(p1, radius: 0.2, fill: black)
-    circle(p2, radius: 0.2, fill: black)
-    circle(p3, radius: 0.2, fill: black)
-    circle(p4, radius: 0.2, fill: black)
-
-    // Syndrome: Highlight the top-left and bottom-left vertices
-    // Let's assume the string is open, creating defects at corners.
-    // For a weight-2 error on a loop, the syndrome is technically 0 if it's a stabilizer.
-    // Let's model a logical error scenario or an open string:
-    // Case: Error on Left (e1) vs Error on Right (e2)
-    // Both connect the top and bottom rows.
-    
-    // Path 1 (Left) - Red
-    line(p1, p4, stroke: (paint: red, thickness: 3pt), name: "e1")
-    content((-2.5, 0), text(fill: red, weight: "bold")[$e_L$])
-    
-    // Path 2 (Right) - Blue
-    line(p2, p3, stroke: (paint: blue, thickness: 3pt), name: "e2")
-    content((2.5, 0), text(fill: blue, weight: "bold")[$e_R$])
-
-    // Labels explaining the symmetry
-    content((0, -2.8), text(size: 9pt)[$e_L$ and $e_R$ are equivalent (differ by $B_p$)])
-    content((0, -3.3), text(size: 9pt)[Both have weight 2. Both satisfy local checks.])
-  }),
-  caption: [Symmetric degeneracy in a Toric code plaquette]
-)
-
-When BP runs on this symmetric structure, it encounters a fatal ambiguity.
-
-1.  *Perfect Symmetry:* The graph structure for $e_L$ is identical to the graph structure for $e_R$.
-2.  *Message Stalling:* BP receives equal evidence for the left-side error and the right-side error.
-3.  *Marginal Probability 0.5:* The algorithm converges to a state where every qubit in the loop has $P(e_i) approx 0.5$.
-
-#definition[
-  *The Hard Decision Failure:*
-  When $P(e_i) approx 0.5$, the log-likelihood ratio is $approx 0$.
-  
-  - If we threshold *below* 0.5: The decoder outputs $bold(e) = bold(0)$ (no error). This fails to satisfy the syndrome.
-  - If we threshold *above* 0.5: The decoder outputs $bold(e) = e_L + e_R$. This is the stabilizer itself (a closed loop), which effectively applies a logical identity but fails to correct the actual open string error.
-]
-
-This is why BP alone typically exhibits *zero threshold* on the Toric code: as the code size increases, the number of these symmetric loops increases, and BP gets confused by all of them simultaneously.
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Two solutions
-    circle((-2, 0), radius: 0.6, fill: rgb("#ffe0e0"), name: "e1")
-    content("e1", $bold(e)_1$)
-
-    circle((2, 0), radius: 0.6, fill: rgb("#e0e0ff"), name: "e2")
-    content("e2", $bold(e)_2$)
-
-    // Same syndrome
-    rect((-0.5, -2.5), (0.5, -1.7), name: "syn")
-    content("syn", $bold(s)$)
-
-    // Arrows
-    line((-1.5, -0.5), (-0.3, -1.6), mark: (end: ">"))
-    line((1.5, -0.5), (0.3, -1.6), mark: (end: ">"))
-
-    // Labels
-    content((0, 0.3), text(size: 9pt)[Equal weight])
-    content((0, -3.2), text(size: 9pt)[Same syndrome!])
-  }),
-  caption: [Two errors with the same syndrome cause BP to fail]
-)
-
-When BP encounters degenerate errors of equal weight:
-
-#enum(
-  [BP assigns high probability to *both* solutions $bold(e)_1$ and $bold(e)_2$],
-  [The beliefs "split" between the two solutions],
-  [BP outputs $bold(e)^"BP" approx bold(e)_1 + bold(e)_2$],
-  [Check: $H dot bold(e)^"BP" = H dot (bold(e)_1 + bold(e)_2) = bold(s) + bold(s) = bold(0) eq.not bold(s)$],
-  [*BP fails to converge!*]
-)
+When BP encounters symmetric degenerate errors:
+1. Beliefs split equally between solutions ($P(e_i) approx 0.5$)
+2. Hard decision outputs either $bold(0)$ or the stabilizer $bold(e)_1 + bold(e)_2$
+3. Neither satisfies the syndrome: $H dot bold(e)^"BP" != bold(s)$
 
 #keypoint[
-  For the Toric code, degeneracy is so prevalent that *BP alone shows no threshold* — increasing code distance makes performance worse, not better!
+  For quantum codes with high degeneracy (like the Toric code), *BP alone shows no threshold* — increasing code distance makes performance worse, not better. This motivates post-processing techniques like OSD.
 ]
 
 = Ordered Statistics Decoding (OSD)
@@ -1656,1598 +1484,6 @@ caption: [Mapping OSD-CS theory to `batch_osd.py` implementation]
 
 
 #pagebreak()
-
-= Quantum Error Correction Basics
-
-== Qubits and Quantum States
-
-#definition[
-  A *qubit* is a quantum two-level system. Its state is written using *ket notation*:
-  $ |psi〉 = alpha |0〉 + beta |1〉 $
-
-  where:
-  - $|0〉 = mat(1; 0)$ and $|1〉 = mat(0; 1)$ are the *computational basis states*
-  - $alpha, beta$ are complex numbers with $|alpha|^2 + |beta|^2 = 1$
-  - The ket symbol $|dot〉$ is standard notation for quantum states
-]
-
-Common quantum states include:
-- $|0〉, |1〉$ = computational basis
-- $|+〉 = 1/sqrt(2)(|0〉 + |1〉)$ = superposition (plus state)
-- $|-〉 = 1/sqrt(2)(|0〉 - |1〉)$ = superposition (minus state)
-
-== Pauli Operators
-
-#definition[
-  The *Pauli operators* are the fundamental single-qubit error operations:
-
-  #figure(
-    table(
-      columns: 4,
-      align: center,
-      [*Symbol*], [*Matrix*], [*Binary repr.*], [*Effect on states*],
-      [$bb(1)$ (Identity)], [$mat(1,0;0,1)$], [$(0,0)$], [No change],
-      [$X$ (bit flip)], [$mat(0,1;1,0)$], [$(1,0)$], [$|0〉 arrow.l.r |1〉$],
-      [$Z$ (phase flip)], [$mat(1,0;0,-1)$], [$(0,1)$], [$|+〉 arrow.l.r |-〉$],
-      [$Y = i X Z$], [$mat(0,-i;i,0)$], [$(1,1)$], [Both flips],
-    ),
-    caption: [Pauli operators]
-  )
-]
-
-#keypoint[
-  Quantum errors are modeled as random Pauli operators:
-  - *X errors* = bit flips (like classical errors)
-  - *Z errors* = phase flips (uniquely quantum, no classical analogue)
-  - *Y errors* = both (can be written as $Y = i X Z$)
-]
-
-#pagebreak()
-
-== Binary Representation of Pauli Errors
-
-#definition[
-  An $n$-qubit Pauli error $E$ can be written in *binary representation*:
-  $ E arrow.r.bar bold(e)_Q = (bold(x), bold(z)) $
-
-  where:
-  - $bold(x) = (x_1, ..., x_n)$ indicates X components ($x_j = 1$ means X error on qubit $j$)
-  - $bold(z) = (z_1, ..., z_n)$ indicates Z components ($z_j = 1$ means Z error on qubit $j$)
-]
-
-For example, the error $E = X_1 Z_3$ on 3 qubits (X on qubit 1, Z on qubit 3) has binary representation:
-$ bold(e)_Q = (bold(x), bold(z)) = ((1,0,0), (0,0,1)) $
-
-== CSS Codes
-
-#definition[
-  A *CSS code* (Calderbank-Shor-Steane code) is a quantum error-correcting code with a structure that allows X and Z errors to be corrected independently.
-
-  A CSS code is defined by two classical parity check matrices $H_X$ and $H_Z$ satisfying:
-  $ H_X dot H_Z^T = bold(0) quad ("orthogonality constraint") $
-
-  The combined quantum parity check matrix is:
-  $ H_"CSS" = mat(H_Z, bold(0); bold(0), H_X) $
-]
-
-#keypoint[
-  The orthogonality constraint $H_X dot H_Z^T = bold(0)$ ensures that the quantum stabilizers *commute* (a necessary condition for valid quantum codes).
-]
-
-#pagebreak()
-
-== Syndrome Measurement in CSS Codes
-
-For a CSS code with error $E arrow.r.bar bold(e)_Q = (bold(x), bold(z))$:
-
-#definition[
-  The *quantum syndrome* is:
-  $ bold(s)_Q = (bold(s)_x, bold(s)_z) = (H_Z dot bold(x), H_X dot bold(z)) $
-
-  - $bold(s)_x = H_Z dot bold(x)$ detects X (bit-flip) errors
-  - $bold(s)_z = H_X dot bold(z)$ detects Z (phase-flip) errors
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // X-error decoding
-    rect((-4, 0.8), (-0.5, 2), fill: rgb("#e8f4e8"), name: "xbox")
-    content((-2.25, 1.6), [X-error decoding])
-    content((-2.25, 1.1), text(size: 9pt)[$H_Z dot bold(x) = bold(s)_x$])
-
-    // Z-error decoding
-    rect((0.5, 0.8), (4, 2), fill: rgb("#e8e8f4"), name: "zbox")
-    content((2.25, 1.6), [Z-error decoding])
-    content((2.25, 1.1), text(size: 9pt)[$H_X dot bold(z) = bold(s)_z$])
-
-    // Label
-    content((0, 0.2), text(size: 9pt)[Two independent classical problems!])
-  }),
-  caption: [CSS codes allow independent X and Z decoding]
-)
-
-#keypoint[
-  CSS codes allow *independent decoding*:
-  - Decode X errors using matrix $H_Z$ and syndrome $bold(s)_x$
-  - Decode Z errors using matrix $H_X$ and syndrome $bold(s)_z$
-
-  Each is a classical syndrome decoding problem — so BP can be applied!
-]
-
-== Quantum Code Parameters
-
-Quantum codes use double-bracket notation $[[n, k, d]]$:
-- $n$ = number of physical qubits
-- $k$ = number of logical qubits encoded
-- $d$ = code distance (minimum weight of undetectable errors)
-
-Compare to classical $[n, k, d]$ notation (single brackets).
-
-#definition[
-  A *quantum LDPC (QLDPC) code* is a CSS code where $H_"CSS"$ is sparse.
-
-  An *$(l_Q, q_Q)$-QLDPC code* has:
-  - Each column of $H_"CSS"$ has at most $l_Q$ ones
-  - Each row of $H_"CSS"$ has at most $q_Q$ ones
-]
-
-#pagebreak()
-
-== The Hypergraph Product Construction
-
-#definition[
-  The *hypergraph product* constructs a quantum CSS code from a classical code.
-
-  Given classical code with $m times n$ parity check matrix $H$:
-
-  $ H_X = mat(H times.o bb(1)_n, bb(1)_m times.o H^T) $
-  $ H_Z = mat(bb(1)_n times.o H, H^T times.o bb(1)_m) $
-
-  Where:
-  - $times.o$ = *Kronecker product* (tensor product of matrices)
-  - $bb(1)_n$ = $n times n$ identity matrix
-  - $H^T$ = transpose of $H$
-]
-
-A well-known example is the *Toric Code*, which is the hypergraph product of the ring code (cyclic repetition code). From a classical $[n, 1, n]$ ring code, we obtain a quantum $[[2n^2, 2, n]]$ Toric code. Its properties include:
-- $(4, 4)$-QLDPC: each stabilizer involves at most 4 qubits
-- High threshold (~10.3% with optimal decoder)
-- Rate $R = 2/(2n^2) arrow.r 0$ as $n arrow.r infinity$
-
-#pagebreak()
-
-== Surface Codes: A Comprehensive Introduction
-
-The *surface code* @kitaev2003fault @bravyi1998quantum is the most studied and practically promising quantum error-correcting code. It belongs to the family of *topological codes*, where quantum information is encoded in global, topological degrees of freedom that are inherently protected from local errors.
-
-=== Stabilizer Formalism for Surface Codes
-
-#definition[
-  A *stabilizer code* is defined by an Abelian subgroup $cal(S)$ of the $n$-qubit Pauli group $"Pauli"(n)$, generated by a set of independent generators $bb(g) = {g_1, dots, g_(n-k)}$.
-  
-  The *code space* $V(cal(S))$ is the simultaneous $+1$-eigenspace of all stabilizers:
-  $ V(cal(S)) = {|psi angle.r : g_i |psi angle.r = |psi angle.r, forall g_i in bb(g)} $
-  
-  This subspace has dimension $2^k$, encoding $k$ logical qubits into $n$ physical qubits.
-]
-
-For a Pauli error $E$ acting on a code state $|c angle.r in V(cal(S))$:
-$ g_i E |c angle.r = (-1)^(l_i(E)) E |c angle.r $
-
-where the *syndrome bit* $l_i(E)$ indicates whether $E$ anticommutes with stabilizer $g_i$. Measuring all stabilizers yields the syndrome vector $bold(l)(E) = (l_1, dots, l_(n-k))$, which identifies the error's equivalence class.
-
-#keypoint[
-  *Error correction criterion:* A stabilizer code corrects a set of errors $bb(E)$ if and only if:
-  $ forall E in bb(E): quad bb(E) sect (E dot bold(C)(cal(S)) - E dot cal(S)) = emptyset $
-  
-  where $bold(C)(cal(S))$ is the *centralizer* of $cal(S)$ (Pauli operators commuting with all stabilizers). Errors in $E dot cal(S)$ are *degenerate* (equivalent to $E$), while errors in $bold(C)(cal(S)) - cal(S)$ are *logical operators* that transform between codewords.
-]
-
-=== The Toric Code: Surface Code on a Torus
-
-#definition[
-  The *toric code* @kitaev2003fault is defined on a square lattice embedded on a torus, with qubits placed on edges. For an $L times L$ lattice, the code has parameters $[[2L^2, 2, L]]$.
-  
-  Stabilizer generators are of two types:
-  - *Star operators* $A_v = product_(e in "star"(v)) X_e$: product of $X$ on all edges meeting at vertex $v$
-  - *Plaquette operators* $B_p = product_(e in "boundary"(p)) Z_e$: product of $Z$ on all edges bounding plaquette $p$
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    // Draw a 3x3 grid representing the toric code lattice
-    let grid_size = 3
-    let spacing = 1.5
-    
-    // Vertices (circles)
-    for i in range(grid_size) {
-      for j in range(grid_size) {
-        circle((i * spacing, j * spacing), radius: 0.08, fill: black)
-      }
-    }
-    
-    // Horizontal edges with qubits
-    for i in range(grid_size - 1) {
-      for j in range(grid_size) {
-        line((i * spacing + 0.1, j * spacing), ((i + 1) * spacing - 0.1, j * spacing), stroke: gray)
-        circle(((i + 0.5) * spacing, j * spacing), radius: 0.12, fill: blue.lighten(60%))
-      }
-    }
-    
-    // Vertical edges with qubits
-    for i in range(grid_size) {
-      for j in range(grid_size - 1) {
-        line((i * spacing, j * spacing + 0.1), (i * spacing, (j + 1) * spacing - 0.1), stroke: gray)
-        circle((i * spacing, (j + 0.5) * spacing), radius: 0.12, fill: blue.lighten(60%))
-      }
-    }
-    
-    // Highlight a star operator (red X)
-    let star_x = 1.5
-    let star_y = 1.5
-    circle((star_x, star_y), radius: 0.25, stroke: red + 2pt, fill: red.lighten(90%))
-    content((star_x, star_y), text(size: 8pt, fill: red)[$A_v$])
-    
-    // Highlight a plaquette operator (blue Z)
-    rect((0.5 * spacing + 0.15, 0.5 * spacing + 0.15), (1.5 * spacing - 0.15, 1.5 * spacing - 0.15), 
-         stroke: blue + 2pt, fill: blue.lighten(90%))
-    content((spacing, spacing), text(size: 8pt, fill: blue)[$B_p$])
-    
-    // Legend
-    content((4.5, 2.5), text(size: 8pt)[Qubits on edges])
-    content((4.5, 2), text(size: 8pt, fill: red)[$A_v = X X X X$ (star)])
-    content((4.5, 1.5), text(size: 8pt, fill: blue)[$B_p = Z Z Z Z$ (plaquette)])
-  }),
-  caption: [Toric code lattice: qubits reside on edges, star operators ($A_v$) act on edges meeting at vertices, plaquette operators ($B_p$) act on edges surrounding faces.]
-)
-
-The star and plaquette operators satisfy:
-- *Commutativity:* $[A_v, A_(v')] = [B_p, B_(p')] = [A_v, B_p] = 0$ for all $v, v', p, p'$
-- *Redundancy:* $product_v A_v = product_p B_p = bb(1)$ (only $2L^2 - 2$ independent generators)
-- *Topological protection:* Logical operators correspond to non-contractible loops on the torus
-
-#keypoint[
-  *Topological interpretation:* Errors create *anyonic excitations* at their endpoints:
-  - $X$ errors create pairs of $m$-anyons (plaquette violations)
-  - $Z$ errors create pairs of $e$-anyons (star violations)
-  
-  A logical error occurs when an anyon pair is created, transported around a non-contractible cycle, and annihilated—this cannot be detected by local stabilizer measurements.
-]
-
-=== Planar Surface Code with Boundaries
-
-For practical implementations, we use a *planar* version with open boundaries @bravyi1998quantum @dennis2002topological:
-
-#definition[
-  The *planar surface code* is defined on a square patch with two types of boundaries:
-  - *Rough boundaries* (top/bottom): where $X$-type stabilizers are truncated
-  - *Smooth boundaries* (left/right): where $Z$-type stabilizers are truncated
-  
-  A distance-$d$ planar code has parameters $[[d^2 + (d-1)^2, 1, d]]$ for storing one logical qubit, or approximately $[[2d^2, 1, d]]$.
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    // Draw planar surface code with boundaries
-    let size = 4
-    let s = 0.9
-    
-    // Background to show boundary types
-    rect((-0.3, -0.3), (size * s + 0.3, size * s + 0.3), fill: white, stroke: none)
-    
-    // Rough boundaries (top and bottom) - red
-    line((-0.2, -0.2), (size * s + 0.2, -0.2), stroke: red + 3pt)
-    line((-0.2, size * s + 0.2), (size * s + 0.2, size * s + 0.2), stroke: red + 3pt)
-    
-    // Smooth boundaries (left and right) - blue  
-    line((-0.2, -0.2), (-0.2, size * s + 0.2), stroke: blue + 3pt)
-    line((size * s + 0.2, -0.2), (size * s + 0.2, size * s + 0.2), stroke: blue + 3pt)
-    
-    // Draw checkerboard pattern for X and Z stabilizers
-    for i in range(size) {
-      for j in range(size) {
-        let x = i * s
-        let y = j * s
-        let color = if calc.rem(i + j, 2) == 0 { rgb("#ffe0e0") } else { rgb("#e0e0ff") }
-        rect((x, y), (x + s, y + s), fill: color, stroke: gray + 0.5pt)
-      }
-    }
-    
-    // Qubits at vertices
-    for i in range(size + 1) {
-      for j in range(size + 1) {
-        circle((i * s, j * s), radius: 0.08, fill: black)
-      }
-    }
-    
-    // Logical operators
-    // Logical X - horizontal path (rough to rough)
-    for i in range(size) {
-      circle((i * s + s/2, 0), radius: 0.12, fill: green.lighten(40%), stroke: green + 1.5pt)
-    }
-    
-    // Logical Z - vertical path (smooth to smooth)
-    for j in range(size) {
-      circle((0, j * s + s/2), radius: 0.12, fill: purple.lighten(40%), stroke: purple + 1.5pt)
-    }
-    
-    // Legend
-    content((5.5, 3), text(size: 8pt, fill: red)[Rough boundary])
-    content((5.5, 2.5), text(size: 8pt, fill: blue)[Smooth boundary])
-    content((5.5, 2), text(size: 8pt, fill: green)[$X_L$: rough $arrow.r$ rough])
-    content((5.5, 1.5), text(size: 8pt, fill: purple)[$Z_L$: smooth $arrow.r$ smooth])
-  }),
-  caption: [Planar surface code with rough (red) and smooth (blue) boundaries. Logical $X_L$ connects rough boundaries; logical $Z_L$ connects smooth boundaries.]
-)
-
-The boundary conditions determine the logical operators:
-- *Logical $X_L$:* String of $X$ operators connecting the two rough boundaries
-- *Logical $Z_L$:* String of $Z$ operators connecting the two smooth boundaries
-
-#keypoint[
-  *Code distance:* The minimum weight of a logical operator equals $d$, the lattice width. To cause a logical error, noise must create a string of errors spanning the entire code—an event exponentially suppressed for $p < p_"th"$.
-]
-
-=== The Rotated Surface Code
-
-The *rotated surface code* @bombin2007optimal @tomita2014low is a more hardware-efficient variant:
-
-#definition[
-  The *rotated surface code* is obtained by rotating the standard surface code lattice by 45°. Qubits are placed on vertices of a checkerboard pattern, with:
-  - $X$-type stabilizers on one color (e.g., white squares)
-  - $Z$-type stabilizers on the other color (e.g., gray squares)
-  
-  For distance $d$, the code has parameters $[[d^2, 1, d]]$—roughly half the qubits of the standard planar code at the same distance.
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    let d = 3  // distance
-    let s = 1.0  // spacing
-    
-    // Draw the rotated lattice (checkerboard)
-    for i in range(d) {
-      for j in range(d) {
-        let x = i * s
-        let y = j * s
-        // Alternate X and Z stabilizers
-        if calc.rem(i + j, 2) == 0 {
-          rect((x - s/2, y - s/2), (x + s/2, y + s/2), fill: rgb("#ffe0e0"), stroke: gray + 0.3pt)
-          content((x, y - 0.05), text(size: 7pt, fill: red.darken(30%))[$X$])
-        } else {
-          rect((x - s/2, y - s/2), (x + s/2, y + s/2), fill: rgb("#e0e0ff"), stroke: gray + 0.3pt)
-          content((x, y - 0.05), text(size: 7pt, fill: blue.darken(30%))[$Z$])
-        }
-      }
-    }
-    
-    // Data qubits at corners of squares
-    for i in range(d + 1) {
-      for j in range(d + 1) {
-        // Only place qubits that touch at least one stabilizer
-        if (i > 0 or j > 0) and (i < d or j < d) and (i > 0 or j < d) and (i < d or j > 0) {
-          let x = (i - 0.5) * s
-          let y = (j - 0.5) * s
-          circle((x, y), radius: 0.12, fill: blue.lighten(50%), stroke: black + 0.8pt)
-        }
-      }
-    }
-    
-    // Labels
-    content((3.5, 2), text(size: 9pt)[Distance $d = 3$])
-    content((3.5, 1.5), text(size: 9pt)[$[[9, 1, 3]]$ code])
-    content((3.5, 1), text(size: 9pt)[9 data qubits])
-    content((3.5, 0.5), text(size: 9pt)[8 ancilla qubits])
-  }),
-  caption: [Rotated surface code with $d = 3$. Data qubits (blue circles) sit at corners where stabilizer plaquettes meet. This is also known as the Surface-17 code (9 data + 8 ancilla qubits).]
-)
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto, auto),
-    align: center,
-    stroke: 0.5pt,
-    inset: 8pt,
-    [*Distance $d$*], [*Data qubits*], [*Ancilla qubits*], [*Total qubits*], [*Code*],
-    [3], [$9$], [$8$], [$17$], [Surface-17],
-    [5], [$25$], [$24$], [$49$], [Surface-49],
-    [7], [$49$], [$48$], [$97$], [Surface-97],
-    [$d$], [$d^2$], [$d^2 - 1$], [$2d^2 - 1$], [General],
-  ),
-  caption: [Rotated surface code parameters for various distances]
-)
-
-=== Syndrome Extraction Circuits
-
-Practical surface code implementations require *syndrome extraction circuits* that measure stabilizers without destroying the encoded information @fowler2012surface:
-
-#definition[
-  *Syndrome extraction* uses ancilla qubits to measure stabilizers via the Hadamard test:
-  1. Initialize ancilla in $|0 angle.r$ (for $Z$-stabilizers) or $|+ angle.r$ (for $X$-stabilizers)
-  2. Apply controlled operations between ancilla and data qubits
-  3. Measure ancilla to obtain syndrome bit
-  
-  The measurement outcome indicates whether the stabilizer eigenvalue is $+1$ (result 0) or $-1$ (result 1).
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    // Draw syndrome extraction circuit schematic
-    content((0, 3), text(size: 9pt)[*$X$-stabilizer measurement:*])
-    
-    // Ancilla line
-    line((1, 2), (6, 2), stroke: gray)
-    content((0.5, 2), text(size: 8pt)[$|0 angle.r$])
-    rect((1.2, 1.8), (1.8, 2.2), fill: yellow.lighten(70%))
-    content((1.5, 2), text(size: 8pt)[$H$])
-    
-    // Data qubit lines
-    for i in range(4) {
-      let y = 0.8 - i * 0.4
-      line((1, y), (6, y), stroke: gray)
-      content((0.5, y), text(size: 8pt)[$q_#(i+1)$])
-    }
-    
-    // CNOT gates (ancilla controls)
-    for (i, x) in ((0, 2.5), (1, 3.2), (2, 3.9), (3, 4.6)) {
-      let y = 0.8 - i * 0.4
-      circle((x, 2), radius: 0.08, fill: black)
-      line((x, 2 - 0.08), (x, y + 0.12))
-      circle((x, y), radius: 0.12, stroke: black + 1pt)
-      line((x - 0.12, y), (x + 0.12, y))
-      line((x, y - 0.12), (x, y + 0.12))
-    }
-    
-    // Final Hadamard and measurement
-    rect((5.2, 1.8), (5.8, 2.2), fill: yellow.lighten(70%))
-    content((5.5, 2), text(size: 8pt)[$H$])
-    rect((6.2, 1.7), (6.8, 2.3), fill: gray.lighten(70%))
-    content((6.5, 2), text(size: 8pt)[$M$])
-    
-    // Z-stabilizer label
-    content((0, -1.2), text(size: 9pt)[*$Z$-stabilizer:* Replace $H$ gates with identity, CNOT targets become controls])
-  }),
-  caption: [Syndrome extraction circuit for a weight-4 $X$-stabilizer. The ancilla mediates the measurement without collapsing the encoded state.]
-)
-
-#keypoint[
-  *Hook errors and scheduling:* The order of CNOT gates matters! A single fault in the syndrome extraction circuit can propagate to multiple data qubits, creating *hook errors*. Careful scheduling (e.g., the "Z-shape" or "N-shape" order) minimizes error propagation while allowing parallel $X$ and $Z$ syndrome extraction.
-]
-
-=== Repeated Syndrome Measurement
-
-A single syndrome measurement can itself be faulty. To achieve fault tolerance, we perform *multiple rounds* of syndrome extraction:
-
-#definition[
-  In *repeated syndrome measurement* with $r$ rounds:
-  1. Measure all stabilizers $r$ times (typically $r = d$ for distance-$d$ code)
-  2. Track syndrome *changes* between consecutive rounds
-  3. Decode using the full spacetime syndrome history
-  
-  Syndrome changes form a 3D structure: 2D spatial syndrome + 1D time axis.
-]
-
-This creates a *3D decoding problem*:
-- *Space-like errors:* Pauli errors on data qubits appear as pairs of adjacent syndromes in space
-- *Time-like errors:* Measurement errors appear as pairs of syndromes in time at the same location
-- *Hook errors:* Correlated space-time error patterns from circuit faults
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    // Draw 3D spacetime diagram
-    let dx = 0.8
-    let dy = 0.5
-    let dz = 0.7
-    
-    // Time slices
-    for t in range(4) {
-      let offset_x = t * 0.3
-      let offset_y = t * dz
-      
-      // Grid for this time slice
-      for i in range(3) {
-        for j in range(3) {
-          let x = i * dx + offset_x
-          let y = j * dy + offset_y
-          circle((x, y), radius: 0.06, fill: gray.lighten(50%))
-        }
-      }
-      
-      // Connect to form grid
-      for i in range(2) {
-        for j in range(3) {
-          let x1 = i * dx + offset_x
-          let x2 = (i + 1) * dx + offset_x
-          let y = j * dy + offset_y
-          line((x1 + 0.06, y), (x2 - 0.06, y), stroke: gray + 0.5pt)
-        }
-      }
-      for i in range(3) {
-        for j in range(2) {
-          let x = i * dx + offset_x
-          let y1 = j * dy + offset_y
-          let y2 = (j + 1) * dy + offset_y
-          line((x, y1 + 0.06), (x, y2 - 0.06), stroke: gray + 0.5pt)
-        }
-      }
-      
-      content((2.8 + offset_x, 0 + offset_y), text(size: 7pt)[$t = #t$])
-    }
-    
-    // Highlight some syndrome events
-    circle((0.8 + 0.3, 0.5 + 0.7), radius: 0.1, fill: red)
-    circle((0.8 + 0.6, 0.5 + 1.4), radius: 0.1, fill: red)
-    line((0.8 + 0.3, 0.5 + 0.7 + 0.1), (0.8 + 0.6, 0.5 + 1.4 - 0.1), stroke: red + 1.5pt)
-    
-    // Space-like error
-    circle((0 + 0.9, 1 + 2.1), radius: 0.1, fill: blue)
-    circle((0.8 + 0.9, 1 + 2.1), radius: 0.1, fill: blue)
-    line((0 + 0.9 + 0.1, 1 + 2.1), (0.8 + 0.9 - 0.1, 1 + 2.1), stroke: blue + 1.5pt)
-    
-    // Legend
-    content((4.5, 2.5), text(size: 8pt, fill: red)[Time-like error])
-    content((4.5, 2.1), text(size: 8pt, fill: red)[(measurement fault)])
-    content((4.5, 1.6), text(size: 8pt, fill: blue)[Space-like error])
-    content((4.5, 1.2), text(size: 8pt, fill: blue)[(data qubit fault)])
-  }),
-  caption: [Spacetime syndrome history. Time-like edges (red) represent measurement errors; space-like edges (blue) represent data qubit errors.]
-)
-
-=== Decoders for Surface Codes
-
-Several decoding algorithms exist for surface codes, with different trade-offs between accuracy and speed:
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto),
-    align: (left, center, center, left),
-    stroke: 0.5pt,
-    inset: 8pt,
-    [*Decoder*], [*Complexity*], [*Threshold*], [*Notes*],
-    [Maximum Likelihood], [$O(n^2)$ to $hash P$-hard], [$tilde 10.3%$], [Optimal but often intractable],
-    [MWPM @dennis2002topological], [$O(n^3)$], [$tilde 10.3%$], [Near-optimal, polynomial time],
-    [Union-Find @delfosse2021almost], [$O(n alpha(n))$], [$tilde 9.9%$], [Nearly linear, practical],
-    [BP+OSD @roffe2020decoding], [$O(n^2)$], [$tilde 7-8%$], [General QLDPC decoder],
-    [Neural Network], [Varies], [$tilde 10%$], [Learning-based, fast inference],
-  ),
-  caption: [Comparison of surface code decoders. Thresholds shown are for phenomenological noise; circuit-level thresholds are typically $0.5$--$1%$.]
-)
-
-The *Minimum Weight Perfect Matching (MWPM)* decoder @dennis2002topological exploits the surface code structure:
-1. Construct a complete graph with syndrome defects as vertices
-2. Edge weights are negative log-likelihoods of error chains
-3. Find minimum-weight perfect matching using Edmonds' blossom algorithm
-4. Infer error chain from matched pairs
-
-#keypoint[
-  *Why MWPM works for surface codes:* The mapping from errors to syndromes has a special structure—each error creates exactly two syndrome defects at its endpoints. Finding the most likely error pattern reduces to pairing up defects optimally, which is exactly the minimum-weight perfect matching problem.
-]
-
-=== Threshold and Scaling Behavior
-
-The surface code exhibits a *threshold* phenomenon:
-
-#definition[
-  The *error threshold* $p_"th"$ is the physical error rate below which:
-  $ lim_(d arrow.r infinity) p_L(d, p) = 0 quad "for" p < p_"th" $
-  
-  where $p_L(d, p)$ is the logical error rate for distance $d$ at physical error rate $p$.
-  
-  Below threshold, the logical error rate scales as:
-  $ p_L approx A (p / p_"th")^(ceil(d\/2)) $
-  
-  for some constant $A$, achieving *exponential suppression* with increasing distance.
-]
-
-#figure(
-  table(
-    columns: (auto, auto, auto),
-    align: (left, center, left),
-    stroke: 0.5pt,
-    inset: 8pt,
-    [*Noise Model*], [*Threshold*], [*Reference*],
-    [Code capacity (perfect measurement)], [$tilde 10.3%$], [Dennis et al. 2002],
-    [Phenomenological (noisy measurement)], [$tilde 2.9$--$3.3%$], [Wang et al. 2003],
-    [Circuit-level depolarizing], [$tilde 0.5$--$1%$], [Various],
-    [Circuit-level with leakage], [$tilde 0.3$--$0.5%$], [Various],
-  ),
-  caption: [Surface code thresholds under different noise models. Circuit-level noise is most realistic but has the lowest threshold.]
-)
-
-=== Experimental Realizations
-
-The surface code has been demonstrated in multiple experimental platforms @google2023suppressing @acharya2024quantum:
-
-#keypoint[
-  *Google Quantum AI (2023):* Demonstrated that increasing code distance from $d = 3$ to $d = 5$ reduces logical error rate by a factor of $tilde 2$, providing the first evidence of *below-threshold* operation in a surface code.
-  
-  *Google Quantum AI (2024):* Achieved logical error rates of $0.14%$ per round with $d = 7$ surface code on the Willow processor, demonstrating clear exponential suppression with distance.
-]
-
-Key experimental milestones include:
-- *2021:* First demonstration of repeated error correction cycles (Google, IBM)
-- *2023:* First evidence of exponential error suppression with distance (Google)
-- *2024:* Below-threshold operation with high-distance codes (Google Willow)
-
-=== Fault-Tolerant Operations via Lattice Surgery
-
-Universal fault-tolerant quantum computation requires operations beyond error correction. *Lattice surgery* @horsman2012surface @litinski2019game enables logical gates by merging and splitting surface code patches:
-
-#definition[
-  *Lattice surgery* performs logical operations by:
-  - *Merge:* Join two surface code patches by measuring joint stabilizers along their boundary
-  - *Split:* Separate a merged patch by measuring individual stabilizers
-  
-  These operations implement logical Pauli measurements, enabling Clifford gates and, with magic state distillation, universal computation.
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    // Two separate patches
-    rect((0, 0), (1.5, 1.5), fill: blue.lighten(80%), stroke: blue + 1pt)
-    content((0.75, 0.75), text(size: 10pt)[$|psi_1 angle.r$])
-    
-    rect((2.5, 0), (4, 1.5), fill: green.lighten(80%), stroke: green + 1pt)
-    content((3.25, 0.75), text(size: 10pt)[$|psi_2 angle.r$])
-    
-    // Arrow
-    line((4.5, 0.75), (5.5, 0.75), mark: (end: ">"), stroke: 1.5pt)
-    content((5, 1.1), text(size: 8pt)[Merge])
-    
-    // Merged patch
-    rect((6, 0), (9, 1.5), fill: purple.lighten(80%), stroke: purple + 1pt)
-    content((7.5, 0.75), text(size: 10pt)[$|psi_1 psi_2 angle.r$ entangled])
-    
-    // Measurement result
-    content((7.5, -0.4), text(size: 8pt)[Measures $Z_1 Z_2$ or $X_1 X_2$])
-  }),
-  caption: [Lattice surgery: merging two surface code patches measures a joint logical Pauli operator, entangling the encoded qubits.]
-)
-
-The merge operation effectively measures:
-- *Rough merge* (along rough boundaries): Measures $X_1 X_2$
-- *Smooth merge* (along smooth boundaries): Measures $Z_1 Z_2$
-
-Combined with single-qubit Cliffords and magic state injection, lattice surgery enables universal fault-tolerant quantum computation entirely within the 2D surface code framework.
-
-#pagebreak()
-
-== Manifest of BP+OSD threshold analysis
-In this section, we implement the BP+OSD decoder on the rotated surface code datasets. The end-to-end workflow consists of three stages: (1) generating detector error models from noisy circuits, (2) building the parity check matrix with hyperedge merging, and (3) estimating logical error rates using soft XOR probability chains.
-
-=== Step 1: Generating Rotated Surface Code DEM Files
-
-The first step is to generate a *Detector Error Model (DEM)* from a noisy quantum circuit using *Stim*. The DEM captures the probabilistic relationship between physical errors and syndrome patterns.
-
-#definition[
-  A *Detector Error Model (DEM)* is a list of *error mechanisms*, each specifying a probability $p$ of occurrence, a set of *detectors* (syndrome bits) that flip when the error occurs, and optionally, *logical observables* that flip when the error occurs.
-]
-
-We use Stim's built-in circuit generator to create rotated surface code memory experiments with circuit-level depolarizing noise:
-
-```python
-import stim
-
-circuit = stim.Circuit.generated(
-    "surface_code:rotated_memory_z",
-    distance=d,        # Code distance
-    rounds=r,          # Number of syndrome measurement rounds
-    after_clifford_depolarization=p,      # Noise after gates
-    before_round_data_depolarization=p,   # Noise on idle qubits
-    before_measure_flip_probability=p,    # Measurement errors
-    after_reset_flip_probability=p,       # Reset errors
-)
-
-# Extract DEM from circuit
-dem = circuit.detector_error_model(decompose_errors=True)
-```
-
-The DEM output uses a compact text format. Key elements include:
-
-#figure(
-  table(
-    columns: (auto, auto),
-    align: (left, left),
-    stroke: 0.5pt,
-    inset: 8pt,
-    [*Syntax*], [*Meaning*],
-    [`error(0.01) D0 D1`], [Error with $p=0.01$ that triggers detectors $D_0$ and $D_1$],
-    [`error(0.01) D0 D1 ^ D2`], [*Correlated error*: triggers ${D_0, D_1}$ AND ${D_2}$ simultaneously],
-    [`error(0.01) D0 L0`], [Error that triggers $D_0$ and flips logical observable $L_0$],
-    [`detector D0`], [Declares detector $D_0$ (syndrome bit)],
-    [`logical_observable L0`], [Declares logical observable $L_0$],
-  ),
-  caption: [DEM syntax elements. The `^` separator indicates correlated fault mechanisms.]
-)
-
-#keypoint[
-  The `^` *separator* is critical for correct decoding. In `error(p) D0 D1 ^ D2`, the fault triggers *both* patterns ${D_0, D_1}$ and ${D_2}$ simultaneously with probability $p$. These must be treated as separate columns in the parity check matrix $H$, each with the same probability $p$.
-]
-
-=== Step 2: Building the Parity Check Matrix $H$
-
-Converting the DEM to a parity check matrix $H$ for BP decoding requires two critical processing stages.
-
-==== Stage 1: Separator Splitting
-
-DEM errors with `^` separators represent correlated faults that trigger multiple detector patterns simultaneously. These must be split into *separate columns* in $H$:
-
-#keypoint[
-  *Example:* Consider `error(0.01) D0 D1 ^ D2 L0`. This splits into two components:
-  - Component 1: detectors $= {D_0, D_1}$, observables $= {}$, probability $= 0.01$
-  - Component 2: detectors $= {D_2}$, observables $= {L_0}$, probability $= 0.01$
-  
-  Each component becomes a *separate column* in the $H$ matrix with the same probability.
-]
-
-The splitting algorithm (from `_split_error_by_separator`):
-
-```python
-def _split_error_by_separator(targets):
-    components = []
-    current_detectors, current_observables = [], []
-    
-    for t in targets:
-        if t.is_separator():  # ^ found
-            components.append({
-                "detectors": current_detectors,
-                "observables": current_observables
-            })
-            current_detectors, current_observables = [], []
-        elif t.is_relative_detector_id():
-            current_detectors.append(t.val)
-        elif t.is_logical_observable_id():
-            current_observables.append(t.val)
-    
-    # Don't forget the last component
-    components.append({"detectors": current_detectors, 
-                       "observables": current_observables})
-    return components
-```
-
-==== Stage 2: Hyperedge Merging
-
-After splitting, errors with *identical detector patterns* are merged into single *hyperedges*. This is essential because:
-1. Errors with identical syndromes are *indistinguishable* to the decoder
-2. Detectors are XOR-based: two errors triggering the same detector cancel out
-3. Merging reduces the factor graph size and improves threshold performance
-
-#definition[
-  *Hyperedge Merging:* When two error mechanisms have identical detector patterns, their probabilities are combined using the *XOR formula*:
-  $ p_"combined" = p_1 + p_2 - 2 p_1 p_2 $
-  
-  This formula computes $P("odd number of errors fire") = P(A xor B)$.
-]
-
-#proof[
-  For independent errors $A$ and $B$:
-  $ P(A xor B) &= P(A) dot (1 - P(B)) + P(B) dot (1 - P(A)) \
-               &= P(A) + P(B) - 2 P(A) P(B) $
-  
-  This is exactly the probability that an *odd* number of the two errors occurs, which determines the net syndrome flip (since two flips cancel).
-]
-
-For observable flip tracking, we compute the *conditional probability* $P("obs flip" | "hyperedge fires")$:
-
-```python
-# When merging error with probability prob into existing hyperedge:
-if has_obs_flip:
-    # New error flips observable: XOR with existing flip probability
-    obs_prob_new = obs_prob_old * (1 - prob) + prob * (1 - obs_prob_old)
-else:
-    # New error doesn't flip observable
-    obs_prob_new = obs_prob_old * (1 - prob)
-
-# Store conditional probability: P(obs flip | hyperedge fires)
-obs_flip[j] = obs_prob / p_combined
-```
-
-#figure(
-  table(
-    columns: (auto, auto, auto),
-    align: (center, center, center),
-    stroke: 0.5pt,
-    inset: 8pt,
-    [*Mode*], [*$H$ Columns (d=3)*], [*Description*],
-    [No split, no merge], [$tilde 286$], [Raw DEM errors as columns],
-    [Split only], [$tilde 556$], [After `^` separator splitting],
-    [Split + merge (optimal)], [$tilde 400$], [After hyperedge merging],
-  ),
-  caption: [Effect of separator splitting and hyperedge merging on $H$ matrix size for $d=3$ rotated surface code. The split+merge approach provides the optimal balance.]
-)
-
-The final output is a tuple $(H, "priors", "obs_flip")$ where:
-- $H$: Parity check matrix of shape $("num_detectors", "num_hyperedges")$
-- $"priors"$: Prior error probabilities per hyperedge
-- $"obs_flip"$: Observable flip probabilities $P("obs flip" | "hyperedge fires")$
-
-=== Step 3: Estimating Logical Error Rate
-
-With the parity check matrix $H$ constructed, we can now decode syndrome samples and estimate the logical error rate.
-
-==== Decoding Pipeline
-
-The BP+OSD decoding pipeline consists of three stages:
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-    
-    // Boxes
-    rect((0, 0), (3, 1.5), name: "bp")
-    content("bp", [*BP Decoder*\ Marginal $P(e_j | bold(s))$])
-    
-    rect((4.5, 0), (7.5, 1.5), name: "osd")
-    content("osd", [*OSD Post-Process*\ Hard solution $hat(bold(e))$])
-    
-    rect((9, 0), (12, 1.5), name: "xor")
-    content("xor", [*XOR Chain*\ Predict $hat(L)$])
-    
-    // Arrows
-    line((3, 0.75), (4.5, 0.75), mark: (end: ">"))
-    line((7.5, 0.75), (9, 0.75), mark: (end: ">"))
-    
-    // Input/Output labels
-    content((1.5, 2), [Syndrome $bold(s)$])
-    line((1.5, 1.8), (1.5, 1.5), mark: (end: ">"))
-    
-    content((10.5, -0.7), [Prediction $hat(L) in {0, 1}$])
-    line((10.5, -0.5), (10.5, 0), mark: (start: ">"))
-  }),
-  caption: [BP+OSD decoding pipeline: BP computes soft marginals, OSD finds a hard solution, XOR chain predicts observable.]
-)
-
-1. *BP Decoding*: Given syndrome $bold(s)$, run belief propagation on the factor graph to compute marginal probabilities $P(e_j = 1 | bold(s))$ for each hyperedge $j$.
-
-2. *OSD Post-Processing*: Use Ordered Statistics Decoding to find a hard solution $hat(bold(e))$ satisfying $H hat(bold(e)) = bold(s)$, ordered by BP marginals.
-
-3. *XOR Probability Chain*: Compute the predicted observable value using soft probabilities.
-
-==== XOR Probability Chain for Observable Prediction
-
-The key insight is that observable prediction must account for the *soft* flip probabilities stored in `obs_flip`. When hyperedges are merged, `obs_flip[j]` contains $P("obs flip" | "hyperedge " j " fires")$, not a binary indicator.
-
-#theorem("XOR Probability Chain")[
-  Given a solution $hat(bold(e))$ and observable flip probabilities $"obs_flip"$, the probability of an odd number of observable flips is computed iteratively:
-  $ P_"flip" = P_"flip" dot (1 - "obs_flip"[j]) + "obs_flip"[j] dot (1 - P_"flip") $
-  for each $j$ where $hat(e)_j = 1$. The predicted observable is $hat(L) = bb(1)[P_"flip" > 0.5]$.
-]
-
-The implementation:
-
-```python
-def compute_observable_predictions_batch(solutions, obs_flip):
-    batch_size = solutions.shape[0]
-    predictions = np.zeros(batch_size, dtype=int)
-    
-    for b in range(batch_size):
-        p_flip = 0.0
-        for i in np.where(solutions[b] == 1)[0]:
-            # XOR probability: P(A XOR B) = P(A)(1-P(B)) + P(B)(1-P(A))
-            p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
-        predictions[b] = int(p_flip > 0.5)
-    
-    return predictions
-```
-
-#keypoint[
-  If `merge_hyperedges=False`, then `obs_flip` contains binary values ${0, 1}$, and the XOR chain reduces to simple parity: $hat(L) = sum_j hat(e)_j dot "obs_flip"[j] mod 2$.
-]
-
-==== Logical Error Rate Estimation
-
-The logical error rate (LER) is estimated by comparing predictions to ground truth:
-
-$ "LER" = 1/N sum_(i=1)^N bb(1)[hat(L)^((i)) eq.not L^((i))] $
-
-where $N$ is the number of syndrome samples, $hat(L)^((i))$ is the predicted observable for sample $i$, and $L^((i))$ is the ground truth.
-
-==== Threshold Analysis
-
-The *threshold* $p_"th"$ is the physical error rate below which increasing code distance reduces the logical error rate. For rotated surface codes with circuit-level depolarizing noise, the threshold is approximately *0.7%* (Bravyi et al., Nature 2024).
-
-#figure(
-  table(
-    columns: (auto, auto, auto, auto),
-    align: (center, center, center, center),
-    stroke: 0.5pt,
-    inset: 8pt,
-    [*Distance*], [*$p = 0.005$*], [*$p = 0.007$*], [*$p = 0.009$*],
-    [$d = 3$], [$tilde 0.03$], [$tilde 0.06$], [$tilde 0.10$],
-    [$d = 5$], [$tilde 0.01$], [$tilde 0.04$], [$tilde 0.09$],
-    [$d = 7$], [$tilde 0.005$], [$tilde 0.03$], [$tilde 0.08$],
-  ),
-  caption: [Example logical error rates for BP+OSD decoder. Below threshold ($p < 0.007$), larger distances achieve lower LER. Above threshold, the trend reverses.]
-)
-
-At the threshold, curves for different distances *cross*: below threshold, larger $d$ gives lower LER; above threshold, larger $d$ gives *higher* LER due to more opportunities for errors to accumulate.
-
-#pagebreak()
-
-== BP Convergence and Performance Guarantees
-
-#theorem("BP Convergence on Trees")[@pearl1988probabilistic @montanari2008belief
-  If the factor graph $G = (V, U, E)$ is a *tree* (contains no cycles), then BP converges to the *exact* marginal probabilities $P(e_j = 1 | bold(s))$ in at most $d$ iterations, where $d$ is the diameter of the tree (maximum distance between any two nodes).
-]
-
-#proof[
-  We prove exactness by induction on the tree structure, using the factorization property of graphical models.
-
-  *Factorization on Trees:* For a tree-structured factor graph, the joint probability distribution factors as:
-  $ P(bold(x)) = 1/Z product_(a in cal(F)) psi_a(bold(x)_(cal(N)(a))) $
-  where $cal(F)$ is the set of factors, $cal(N)(a)$ are neighbors of factor $a$, and $Z$ is the partition function.
-
-  *Key Property:* On a tree, removing any node $v$ separates the graph into disjoint connected components (subtrees). By the global Markov property, variables in different subtrees are conditionally independent given $v$.
-
-  *Base Case (Leaf Nodes):* Consider a leaf variable node $v$ with single neighbor (factor) $a$. The message $mu_(v arrow.r a)(x_v)$ depends only on the local evidence $P(y_v | x_v)$. Since there are no other dependencies, this message is exact at iteration 1.
-
-  *Inductive Step:* Assume messages from all nodes at distance $> k$ from root are exact. Consider node $u$ at distance $k$ with neighbors $cal(N)(u) = {a_1, ..., a_m}$.
-
-  For message $mu_(u arrow.r a_i)(x_u)$, the BP update is:
-  $ mu_(u arrow.r a_i)(x_u) prop P(y_u | x_u) product_(a_j in cal(N)(u) without {a_i}) mu_(a_j arrow.r u)(x_u) $
-
-  By the separation property, removing $u$ creates $m$ independent subtrees rooted at ${a_1, ..., a_m}$. By the inductive hypothesis, messages from these subtrees are exact marginals of their respective subtrees. Since subtrees are conditionally independent given $u$, the product of messages equals the joint probability of all subtree configurations, making $mu_(u arrow.r a_i)(x_u)$ exact.
-
-  *Termination:* After $d$ iterations (where $d$ is the tree diameter), messages have propagated from all leaves to all nodes. Each node's belief $b_v(x_v) prop P(y_v | x_v) product_(a in cal(N)(v)) mu_(a arrow.r v)(x_v)$ equals the exact marginal $P(x_v | bold(y))$ by the factorization property.
-
-  Therefore, BP computes exact marginals on trees in $d$ iterations.
-]
-
-*Example:* Consider the $[7, 4, 3]$ Hamming code with tree-structured factor graph:
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Data nodes (top)
-    for (i, x) in ((0, 0), (1, 2), (2, 4), (3, 6)) {
-      circle((x, 3), radius: 0.3, name: "v" + str(i), fill: rgb("#e0ffe0"))
-      content("v" + str(i), $v_#i$)
-    }
-
-    // Parity nodes (bottom)
-    for (i, x) in ((0, 1), (1, 3), (2, 5)) {
-      rect((x - 0.3, -0.3), (x + 0.3, 0.3), name: "u" + str(i), fill: rgb("#ffe0e0"))
-      content("u" + str(i), $u_#i$)
-    }
-
-    // Tree edges (no cycles)
-    line((0, 2.7), (0.8, 0.3))    // v0-u0
-    line((2, 2.7), (1.2, 0.3))    // v1-u0
-    line((2, 2.7), (2.8, 0.3))    // v1-u1
-    line((4, 2.7), (3.2, 0.3))    // v2-u1
-    line((4, 2.7), (4.8, 0.3))    // v2-u2
-    line((6, 2.7), (5.2, 0.3))    // v3-u2
-
-    content((3, -1.2), text(size: 9pt)[Tree structure: diameter $d = 4$, BP converges in 4 iterations])
-  }),
-  caption: [Tree-structured code where BP gives exact solution]
-)
-
-For this tree with syndrome $bold(s) = (1, 0, 0)$ and $p = 0.1$:
-- BP converges in $d = 4$ iterations
-- Output: $bold(e)^"BP" = (1, 0, 0, 0, 0, 0, 0)$ (single bit flip at position 0)
-- This is the *exact* maximum likelihood solution
-
-#v(1em)
-
-#theorem("BP Performance on Graphs with Cycles")[@richardson2008modern @tatikonda2002loopy
-  For an $(l, q)$-LDPC code with factor graph of *girth* $g$ (minimum cycle length), BP provides the following guarantees:
-
-  1. *Local optimality:* If the true error $bold(e)^*$ has Hamming weight $|bold(e)^*| < g\/2$, then BP converges to $bold(e)^*$ with high probability (for sufficiently small $p$).
-
-  2. *Approximation bound:* For codes with girth $g >= 6$ and maximum degree $Delta = max(l, q)$, if BP converges, the output $bold(e)^"BP"$ satisfies:
-  $ |bold(e)^"BP"| <= (1 + epsilon(g, Delta)) dot |bold(e)^*| $
-  where $epsilon(g, Delta) arrow.r 0$ as $g arrow.r infinity$ for fixed $Delta$.
-
-  3. *Iteration complexity:* BP requires $O(g)$ iterations to propagate information across the shortest cycle.
-]
-
-#proof[
-  *Part 1 (Local optimality):* Consider an error $bold(e)^*$ with $|bold(e)^*| < g\/2$. In the factor graph, the neighborhood of radius $r = floor(g\/2) - 1$ around any error bit is a tree (no cycles within distance $r$). Within this tree neighborhood:
-  - BP computes exact marginals (by Theorem 1)
-  - The error bits are separated by distance $>= g\/2$
-  - No interference between error regions
-
-  Therefore, BP correctly identifies each error bit independently, giving $bold(e)^"BP" = bold(e)^*$.
-
-  *Part 2 (Approximation bound):* For $|bold(e)^*| >= g\/2$, cycles create dependencies. The approximation error comes from:
-  - *Double-counting:* Evidence circulates through cycles
-  - *Correlation:* Nearby error bits are not independent
-
-  For girth $g$, the correlation decays exponentially with distance. The number of length-$g$ cycles through a node is bounded by $Delta^g$. Using the correlation decay lemma for loopy belief propagation, the relative error in log-likelihood ratios is:
-  $ epsilon(g, Delta) <= C dot Delta^(2-g\/2) $
-  for some constant $C$. This translates to the weight approximation bound.
-
-  *Part 3 (Iteration complexity):* Information propagates one edge per iteration. To detect a cycle of length $g$, messages must travel distance $g$, requiring $O(g)$ iterations.
-]
-
-#keypoint[
-  *Practical implications:*
-  - Codes with large girth $g$ (e.g., $g >= 8$) allow BP to correct more errors
-  - Random LDPC codes typically have $g = O(log n)$, giving good BP performance
-  - Structured codes (e.g., Toric code with $g = 4$) have small girth, leading to BP failures
-  - The degeneracy problem in quantum codes compounds the cycle problem, making OSD necessary
-]
-
-=== Density Evolution Framework
-
-We now develop the rigorous theoretical foundations that explain *when* and *why* BP converges in different regimes, drawing from asymptotic analysis via density evolution @richardson2001capacity, variational optimization through statistical physics @yedidia2003understanding, and combinatorial failure modes @dolecek2010analysis.
-
-For infinite-length random LDPC codes, convergence is analyzed through the *density evolution* method @richardson2008modern, which tracks the probability distributions of messages rather than individual message values.
-
-#definition[
-  *Cycle-Free Horizon:* For a random LDPC code with block length $n arrow.r infinity$, the *computation tree* of depth $l$ rooted at any edge is the subgraph containing all nodes reachable within $l$ hops. The cycle-free horizon property states:
-  $ lim_(n arrow.r infinity) bb(P)(text("cycle in depth-")l text(" tree")) = 0 $
-
-  This means that for any fixed number of iterations $l$, the local neighborhood appears tree-like with probability approaching 1 as $n arrow.r infinity$.
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Root edge
-    circle((0, 0), radius: 0.15, fill: blue.lighten(60%))
-    content((0, 0), text(size: 8pt, fill: blue)[root])
-
-    // Depth 1
-    for i in range(3) {
-      let x = (i - 1) * 1.5
-      circle((x, -1.2), radius: 0.12, fill: red.lighten(70%))
-      line((0, -0.15), (x, -1.08))
-    }
-
-    // Depth 2
-    for i in range(3) {
-      for j in range(2) {
-        let x = (i - 1) * 1.5 + (j - 0.5) * 0.6
-        let y = -2.2
-        circle((x, y), radius: 0.1, fill: blue.lighten(60%))
-        line(((i - 1) * 1.5, -1.32), (x, y + 0.1))
-      }
-    }
-
-    content((0, -3), text(size: 9pt)[Computation tree of depth $l=2$: no cycles])
-    content((3.5, -1), text(size: 8pt, fill: red)[check nodes])
-    content((3.5, -1.5), text(size: 8pt, fill: blue)[variable nodes])
-  }),
-  caption: [Locally tree-like structure in large random graphs]
-)
-
-#keypoint[
-  The cycle-free horizon is the mathematical justification for applying tree-based convergence proofs to loopy graphs in the asymptotic limit. It explains why BP performs well on long random LDPC codes despite the presence of cycles.
-]
-
-#definition[
-  *Concentration Theorem:* Let $Z$ be a performance metric (e.g., bit error rate) of BP after $l$ iterations on a code randomly drawn from ensemble $cal(C)(n, lambda, rho)$, where $lambda(x)$ and $rho(x)$ are the variable and check node degree distributions. For any $epsilon > 0$:
-  $ bb(P)(|Z - bb(E)[Z]| > epsilon) <= e^(-beta n epsilon^2) $
-  where $beta > 0$ depends on the ensemble parameters.
-
-  *Interpretation:* As $n arrow.r infinity$, almost all codes in the ensemble perform identically to the ensemble average. Individual code performance concentrates around the mean with exponentially small deviation probability.
-]
-
-#keypoint[
-  *Concentration visualization:* The performance metric $Z$ concentrates exponentially around its ensemble average $bb(E)[Z]$. For large block length $n$, the probability of deviation greater than $epsilon$ decays as $e^(-beta n epsilon^2)$, meaning almost all codes perform identically to the average.
-]
-
-The proof of the Concentration Theorem uses martingale theory:
-
-#proof[
-  *Proof sketch via Doob's Martingale:*
-
-  1. *Martingale Construction:* View code selection as revealing edges sequentially. Define $Z_i = bb(E)[Z | text("first ") i text(" edges revealed")]$. This forms a Doob martingale: $bb(E)[Z_(i+1) | Z_0, ..., Z_i] = Z_i$.
-
-  2. *Bounded Differences:* In a sparse graph with maximum degree $Delta$, changing a single edge affects at most $O(Delta^l)$ messages after $l$ iterations. Since $Delta$ is constant and $l$ is fixed, the change in $Z$ is bounded: $|Z_i - Z_(i-1)| <= c\/n$ for some constant $c$.
-
-  3. *Azuma-Hoeffding Inequality:* For a martingale with bounded differences $|Z_i - Z_(i-1)| <= c_i$:
-  $ bb(P)(|Z_m - Z_0| > epsilon) <= 2 exp(-(epsilon^2)/(2 sum_(i=1)^m c_i^2)) $
-
-  4. *Application:* With $m = O(n)$ edges and $c_i = O(1\/n)$, we have $sum c_i^2 = O(1\/n)$, giving:
-  $ bb(P)(|Z - bb(E)[Z]| > epsilon) <= 2 exp(-(epsilon^2 n)/(2 C)) = e^(-beta n epsilon^2) $
-  where $beta = 1\/(2C)$.
-]
-
-#theorem("Threshold Theorem")[
-  For a code ensemble with degree distributions $lambda(x), rho(x)$ and a symmetric channel with noise parameter $sigma$ (e.g., standard deviation for AWGN), there exists a unique *threshold* $sigma^*$ such that:
-
-  1. If $sigma < sigma^*$ (low noise): As $l arrow.r infinity$, the probability of decoding error $P_e^((l)) arrow.r 0$
-
-  2. If $sigma > sigma^*$ (high noise): $P_e^((l))$ remains bounded away from zero
-
-  The threshold is determined by the fixed points of the density evolution recursion:
-  $ P_(l+1) = Phi(P_l, sigma) $
-  where $Phi$ is the density update operator combining variable and check node operations.
-]
-
-#keypoint[
-  *Threshold phenomenon:* There exists a sharp transition at $sigma^*$. Below this threshold (low noise), BP converges to zero error as iterations increase. Above threshold (high noise), errors persist. This sharp phase transition is characteristic of random LDPC ensembles.
-]
-
-#keypoint[
-  *Why the threshold exists:* The density evolution operator $Phi$ has two competing fixed points:
-  - *All-correct fixed point:* Messages concentrate at $plus.minus infinity$ (high confidence)
-  - *Error fixed point:* Messages remain near zero (low confidence)
-
-  Below threshold, the all-correct fixed point is stable and attracts all trajectories. Above threshold, the error fixed point becomes stable, trapping the decoder.
-]
-
-=== Variational Perspective: Bethe Free Energy
-
-The density evolution framework applies to infinite-length codes. For finite loopy graphs, we need a different lens: *statistical physics* @yedidia2003understanding. This reveals that BP is actually performing *variational optimization* of an energy function.
-
-#definition[
-  *Bethe Free Energy:* For a factor graph with variables $bold(x) = (x_1, ..., x_n)$ and factors $psi_a$, let $b_i(x_i)$ be the *belief* (pseudo-marginal) at variable $i$ and $b_a(bold(x)_a)$ be the belief at factor $a$. The Bethe Free Energy is:
-  $ F_"Bethe"(b) = sum_a sum_(bold(x)_a) b_a(bold(x)_a) E_a(bold(x)_a) - H_"Bethe"(b) $
-
-  where the *Bethe entropy* approximates the true entropy using local entropies:
-  $ H_"Bethe" = sum_a H(b_a) + sum_i (1 - d_i) H(b_i) $
-
-  Here $d_i$ is the degree of variable $i$, and $H(b) = -sum_x b(x) log b(x)$ is the Shannon entropy.
-
-  *Constraints:* Beliefs must be normalized and *marginally consistent*:
-  $ sum_(bold(x)_a without x_i) b_a(bold(x)_a) = b_i(x_i) quad "for all" i in a $
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Simple 3-node factor graph
-    circle((-1.5, 0), radius: 0.15, fill: blue.lighten(60%))
-    content((-1.5, 0), text(size: 8pt)[$x_1$])
-
-    circle((1.5, 0), radius: 0.15, fill: blue.lighten(60%))
-    content((1.5, 0), text(size: 8pt)[$x_2$])
-
-    rect((-0.15, -0.15), (0.15, 0.15), fill: red.lighten(70%))
-    content((0, 0), text(size: 8pt)[$psi$])
-
-    line((-1.35, 0), (-0.15, 0), stroke: gray)
-    line((0.15, 0), (1.35, 0), stroke: gray)
-
-    // Entropy terms
-    content((-1.5, -0.8), text(size: 8pt, fill: blue)[$H(b_1)$])
-    content((1.5, -0.8), text(size: 8pt, fill: blue)[$H(b_2)$])
-    content((0, -0.8), text(size: 8pt, fill: red)[$H(b_psi)$])
-
-    content((0, -1.5), text(size: 9pt)[Bethe entropy: $H_"Bethe" = H(b_psi) + (1-2)H(b_1) + (1-2)H(b_2)$])
-    content((0, -2), text(size: 8pt)[$(d_1 = d_2 = 2$ for this graph$)$])
-  }),
-  caption: [Bethe entropy decomposes global entropy into local terms]
-)
-
-#keypoint[
-  *Intuition:* The Bethe approximation treats each factor independently, summing local entropies. The $(1 - d_i)$ correction prevents double-counting: a variable connected to $d_i$ factors appears in $d_i$ factor entropies, so we subtract $(d_i - 1)$ copies of its individual entropy.
-]
-
-#theorem("Yedidia-Freeman-Weiss")[@yedidia2003understanding
-  A set of beliefs $\\{b_i, b_a\\}$ is a *fixed point* of the Sum-Product BP algorithm if and only if it is a *stationary point* (critical point) of the Bethe Free Energy $F_"Bethe"(b)$ subject to normalization and marginalization constraints.
-
-  *Equivalently:* BP performs coordinate descent on the Bethe Free Energy. Each message update corresponds to minimizing $F_"Bethe"$ with respect to one edge's belief.
-]
-
-#proof[
-  *Proof sketch via Lagrangian:*
-
-  1. *Constrained optimization:* Form the Lagrangian:
-  $ cal(L) = F_"Bethe"(b) + sum_(i,a) sum_(x_i) lambda_(i a)(x_i) (b_i(x_i) - sum_(bold(x)_a without x_i) b_a(bold(x)_a)) + "normalization terms" $
-
-  2. *Stationarity conditions:* Taking $partial cal(L) \/ partial b_a = 0$ and $partial cal(L) \/ partial b_i = 0$:
-  $ b_a(bold(x)_a) prop psi_a(bold(x)_a) product_(i in a) exp(lambda_(i a)(x_i)) $
-  $ b_i(x_i) prop product_(a in i) exp(lambda_(a i)(x_i)) $
-
-  3. *Message identification:* Define messages $mu_(i arrow.r a)(x_i) = exp(lambda_(i a)(x_i))$. Substituting and enforcing marginalization constraints yields exactly the BP update equations:
-  $ mu_(i arrow.r a)(x_i) prop P(y_i | x_i) product_(a' in i without a) mu_(a' arrow.r i)(x_i) $
-  $ mu_(a arrow.r i)(x_i) prop sum_(bold(x)_a without x_i) psi_a(bold(x)_a) product_(i' in a without i) mu_(i' arrow.r a)(x_(i')) $
-]
-
-#keypoint[
-  *Energy landscape interpretation:* BP performs gradient descent on the Bethe Free Energy landscape. On trees, there's a single global minimum (correct solution). On loopy graphs, local minima can trap the decoder, corresponding to incorrect fixed points. The contour lines represent energy levels, with BP trajectories flowing toward minima.
-]
-
-#keypoint[
-  *Implications for convergence:*
-  - *On trees:* Bethe approximation is exact ($F_"Bethe" = F_"Gibbs"$), so BP finds the global minimum
-  - *On loopy graphs:* $F_"Bethe"$ is an approximation. BP finds a local minimum, which may not be the true posterior
-  - *Stable fixed points* correspond to local minima of $F_"Bethe"$
-  - *Unstable fixed points* (saddle points) cause oscillations
-
-  This explains why BP can converge to incorrect solutions: it gets trapped in local minima created by graph cycles.
-]
-
-=== Sufficient Conditions for Convergence
-
-While density evolution guarantees asymptotic convergence and Bethe theory explains fixed points, neither provides *guarantees* for specific finite loopy graphs. We now present rigorous sufficient conditions @ihler2005loopy.
-
-#definition[
-  *Dobrushin's Influence Matrix:* For a graphical model, the influence $C_(i j)$ measures the maximum change in the marginal distribution of variable $i$ caused by fixing variable $j$:
-  $ C_(i j) = sup_(x_j, x_j') ||P(x_i | x_j) - P(x_i | x_j')||_"TV" $
-
-  where $|| dot ||_"TV"$ is the total variation distance.
-
-  The *Dobrushin interdependence matrix* $bold(C)$ has entries $C_(i j)$ for $i eq.not j$ and $C_(i i) = 0$.
-]
-
-#theorem("Dobrushin's Uniqueness Condition")[
-  If the Dobrushin matrix satisfies:
-  $ ||bold(C)||_infinity = max_i sum_(j eq.not i) C_(i j) < 1 $
-
-  then:
-  1. The Gibbs measure has a unique fixed point
-  2. BP converges exponentially fast to this fixed point from any initialization
-  3. The convergence rate is $lambda = ||bold(C)||_infinity$
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // Small graph example
-    for i in range(4) {
-      let angle = i * 90deg
-      let x = 1.5 * calc.cos(angle)
-      let y = 1.5 * calc.sin(angle)
-      circle((x, y), radius: 0.15, fill: blue.lighten(60%))
-      content((x, y), text(size: 8pt)[$x_#(i+1)$])
-    }
-
-    // Edges
-    for i in range(4) {
-      let angle1 = i * 90deg
-      let angle2 = calc.rem(i + 1, 4) * 90deg
-      let x1 = 1.5 * calc.cos(angle1)
-      let y1 = 1.5 * calc.sin(angle1)
-      let x2 = 1.5 * calc.cos(angle2)
-      let y2 = 1.5 * calc.sin(angle2)
-      line((x1, y1), (x2, y2), stroke: gray)
-    }
-
-    // Influence matrix
-    content((0, -2.5), text(size: 9pt)[Example: 4-cycle with weak coupling])
-    content((0, -3), text(size: 8pt)[$||bold(C)||_infinity = max_i sum_j C_(i j) = 2 dot 0.3 = 0.6 < 1$ ✓])
-  }),
-  caption: [Dobrushin condition: information dissipates through the graph]
-)
-
-#keypoint[
-  *Limitation for LDPC codes:* Error correction codes are designed to *propagate* information over long distances. Parity checks impose hard constraints (infinite coupling strength). Therefore, useful LDPC codes typically *violate* Dobrushin's condition.
-
-  While sufficient, Dobrushin's condition is far from necessary. It applies mainly to high-noise regimes where correlations are weak.
-]
-
-#theorem("Contraction Mapping Convergence")[
-  View BP as a mapping $bold(T): cal(M) arrow.r cal(M)$ on the space of messages. If $bold(T)$ is a *contraction* under some metric $d$:
-  $ d(bold(T)(bold(m)), bold(T)(bold(m'))) <= lambda dot d(bold(m), bold(m')) $
-  with Lipschitz constant $lambda < 1$, then:
-
-  1. BP has a unique fixed point $bold(m)^*$
-  2. BP converges geometrically: $d(bold(m)^((t)), bold(m)^*) <= lambda^t d(bold(m)^((0)), bold(m)^*)$
-]
-
-#proof[
-  *Proof:* Direct application of the Banach Fixed Point Theorem. The contraction property ensures:
-  - *Uniqueness:* If $bold(m)^*$ and $bold(m')^*$ are both fixed points, then:
-  $ d(bold(m)^*, bold(m')^*) = d(bold(T)(bold(m)^*), bold(T)(bold(m')^*)) <= lambda dot d(bold(m)^*, bold(m')^*) $
-  Since $lambda < 1$, this implies $d(bold(m)^*, bold(m')^*) = 0$, so $bold(m)^* = bold(m')^*$.
-
-  - *Convergence:* For any initialization $bold(m)^((0))$:
-  $ d(bold(m)^((t+1)), bold(m)^*) = d(bold(T)(bold(m)^((t))), bold(T)(bold(m)^*)) <= lambda dot d(bold(m)^((t)), bold(m)^*) $
-  Iterating gives $d(bold(m)^((t)), bold(m)^*) <= lambda^t d(bold(m)^((0)), bold(m)^*)$.
-]
-
-#keypoint[
-  *Spectral radius condition:* For binary pairwise models, the contraction constant can be computed from the *spectral radius* of the interaction matrix:
-  $ rho(bold(A)) < 1, quad "where" A_(i j) = tanh |J_(i j)| $
-
-  This is sharper than Dobrushin's condition (which corresponds to the $L_infinity$ norm of $bold(A)$).
-]
-
-=== Failure Mechanisms: Trapping Sets
-
-The previous sections explain when BP converges. We now characterize when and why it *fails* @dolecek2010analysis. In the high-SNR regime, BP can get trapped in incorrect fixed points due to specific graph substructures.
-
-#definition[
-  *(a,b) Absorbing Set:* A subset $cal(D) subset.eq V$ of $a$ variable nodes is an $(a, b)$ absorbing set if:
-
-  1. The induced subgraph contains exactly $b$ *odd-degree* check nodes (unsatisfied checks)
-  2. Every variable node $v in cal(D)$ has *strictly more* even-degree neighbors than odd-degree neighbors in the induced subgraph
-
-  *Interpretation:* If the variables in $cal(D)$ are in error, each receives more "confirming" messages (from satisfied checks) than "correcting" messages (from unsatisfied checks), causing the decoder to stabilize in the error state.
-]
-
-#figure(
-  canvas(length: 1cm, {
-    import draw: *
-
-    // The canonical (5,3) absorbing set
-    // 5 variable nodes in a specific configuration
-    let var_pos = (
-      (-1.5, 0),
-      (-0.75, 1),
-      (0.75, 1),
-      (1.5, 0),
-      (0, -0.5)
-    )
-
-    // Variable nodes
-    for (i, pos) in var_pos.enumerate() {
-      circle(pos, radius: 0.15, fill: red.lighten(40%))
-      content(pos, text(size: 7pt, fill: white, weight: "bold")[$v_#(i+1)$])
-    }
-
-    // Check nodes (3 odd-degree, others even-degree)
-    let check_pos = (
-      (-1.1, 0.5),   // odd
-      (0, 0.7),      // odd
-      (1.1, 0.5),    // odd
-      (-0.5, -0.8),  // even (degree 2)
-      (0.5, -0.8)    // even (degree 2)
-    )
-
-    for (i, pos) in check_pos.enumerate() {
-      let color = if i < 3 { rgb("#ff8800") } else { rgb("#00cc00") }
-      rect((pos.at(0) - 0.12, pos.at(1) - 0.12), (pos.at(0) + 0.12, pos.at(1) + 0.12),
-           fill: color.lighten(60%))
-      content(pos, text(size: 6pt)[$c_#(i+1)$])
-    }
-
-    // Edges (simplified connectivity)
-    line(var_pos.at(0), check_pos.at(0))
-    line(var_pos.at(1), check_pos.at(0))
-    line(var_pos.at(1), check_pos.at(1))
-    line(var_pos.at(2), check_pos.at(1))
-    line(var_pos.at(2), check_pos.at(2))
-    line(var_pos.at(3), check_pos.at(2))
-    line(var_pos.at(4), check_pos.at(3))
-    line(var_pos.at(0), check_pos.at(3))
-    line(var_pos.at(4), check_pos.at(4))
-    line(var_pos.at(3), check_pos.at(4))
-
-    content((0, -1.8), text(size: 9pt, fill: red)[5 error variables (red)])
-    content((0, -2.2), text(size: 9pt, fill: rgb("#ff8800"))[3 odd-degree checks (orange)])
-    content((0, -2.6), text(size: 9pt, fill: rgb("#00cc00"))[Even-degree checks (green)])
-    content((0, -3.2), text(size: 8pt)[Canonical $(5,3)$ absorbing set: each variable has $>=2$ even neighbors])
-  }),
-  caption: [The $(5,3)$ absorbing set: a stable error configuration]
-)
-
-#keypoint[
-  *Why BP gets trapped:*
-  1. *Majority vote:* Each variable node performs a weighted majority vote of its check neighbors
-  2. *Satisfied checks dominate:* In an absorbing set, satisfied checks (even degree) outnumber unsatisfied checks (odd degree) for each variable
-  3. *Reinforcement loop:* Satisfied checks send messages that *confirm* the error state, while unsatisfied checks send weak correction signals
-  4. *Stable fixed point:* The configuration becomes a local minimum of the Bethe Free Energy
-
-  This is the primary cause of *error floors* in LDPC codes: at high SNR, rare noise patterns that activate absorbing sets dominate the error probability.
-]
-
-#theorem("Absorbing Sets and Error Floors")[
-  For an LDPC code with minimum absorbing set size $(a_"min", b_"min")$, the error floor is dominated by:
-  $ P_"error" approx binom(n, a_"min") dot p^(a_"min") dot (1-p)^(n-a_"min") dot P_"trap" $
-
-  where $P_"trap"$ is the probability that BP fails to correct the absorbing set configuration.
-
-  *Implication:* Error floor height is determined by the *size* and *multiplicity* of small absorbing sets. Code design focuses on eliminating small absorbing sets.
-]
-
-#pagebreak()
-
-
-= Minimum Weight Perfect Matching (MWPM) Decoder
-
-== Maximum Likelihood Decoding and MWPM
-
-Maximum Likelihood Decoding (MLD) seeks the most probable error pattern $bold(e)$ given syndrome $bold(s)$ and error probabilities $p(bold(e))$.
-
-#definition[
-  *Maximum Likelihood Decoding Problem:* Given parity check matrix $bold(H) in bb(F)_2^(m times n)$, syndrome $bold(s) in bb(F)_2^m$, and error weights $w_i = ln((1-p_i)/p_i)$, find:
-  $ min_(bold(c) in bb(F)_2^n) sum_(i in [n]) w_i c_i quad "subject to" quad bold(H) bold(c) = bold(s) $
-]
-
-For certain code structures, MLD can be efficiently reduced to a graph matching problem.
-
-#theorem("MLD to MWPM Reduction")[
-  If every column of $bold(H)$ has at most 2 non-zero elements (each error triggers at most 2 detectors), then MLD can be deterministically reduced to Minimum Weight Perfect Matching with boundaries in polynomial time.
-]
-
-#definition[
-  *Detector Graph:* Given $bold(H) in bb(F)_2^(m times n)$, construct graph $G = (V, E)$ where:
-  - Vertices: $V = [m] union {0}$ (detectors plus boundary vertex)
-  - Edges: For each column $i$ of $bold(H)$:
-    - If column $i$ has weight 2 (triggers detectors $x_1, x_2$): edge $(x_1, x_2)$ with weight $w_i$
-    - If column $i$ has weight 1 (triggers detector $x$): edge $(x, 0)$ with weight $w_i$
-]
-
-#proof[
-  *Reduction procedure:*
-
-  1. *Graph construction:* Build detector graph $G$ from $bold(H)$ as defined above. The boundary operator $partial: bb(F)_2^n arrow.r bb(F)_2^(m+1)$ maps edge vectors to vertex vectors, corresponding to the parity check matrix.
-
-  2. *Syndrome to boundary:* Given syndrome $bold(s) in bb(F)_2^m$, identify the set $D subset.eq V$ of vertices with non-zero syndrome values. This becomes the boundary condition for the matching problem.
-
-  3. *Shortest path computation:* For all pairs $(u, v)$ where $u, v in D union {0}$, compute shortest paths using Dijkstra's algorithm. This requires $O(|D|^2)$ shortest path computations, constructing a complete weighted graph on $D union {0}$.
-
-  4. *MWPM with boundary:* Solve MWPM on the complete graph with boundary vertex ${0}$. The solution gives edges whose boundary equals $D$, which corresponds to the minimum weight error pattern satisfying $bold(H) bold(c) = bold(s)$.
-
-  Since each step is polynomial time, MLD reduces to MWPM in polynomial time.
-]
-
-== The Matching Polytope
-
-#definition[
-  *Weighted Perfect Matching:* Given weighted graph $G = (V, E, W)$ where $W = {w_e in bb(R) | e in E}$:
-  - A *matching* $M subset.eq E$ has no two edges sharing a vertex
-  - A *perfect matching* covers every vertex in $V$
-  - The *weight* of matching $M$ is $sum_(e in M) w_e$
-]
-
-The integer programming formulation uses indicator variables $x_e in {0, 1}$:
-
-$ min_bold(x) sum_(e in E) w_e x_e quad "subject to" quad sum_(e in delta({v})) x_e = 1 space forall v in V, quad x_e in {0, 1} $
-
-where $delta({v})$ denotes edges incident to vertex $v$.
-
-#theorem("Matching Polytope Characterization")[
-  Define the odd set family $cal(O)(G) = {U subset.eq V : |U| "is odd and" >= 3}$. Let:
-  $ P_1(G) &= "conv"{bold(x) : x_e in {0,1}, sum_(e in delta({v})) x_e = 1 space forall v in V} \
-  P_2(G) &= {bold(x) : x_e >= 0, sum_(e in delta({v})) x_e = 1 space forall v in V, sum_(e in delta(U)) x_e >= 1 space forall U in cal(O)(G)} $
-
-  If edge weights are rational, then $P_1(G) = P_2(G)$.
-
-  *Implication:* The integer program can be relaxed to a linear program by replacing $x_e in {0,1}$ with $x_e >= 0$ and adding the *blossom constraints* $sum_(e in delta(U)) x_e >= 1$ for all odd sets $U$.
-]
-
-#keypoint[
-  *Why blossom constraints matter:* An odd set $U$ cannot have a perfect matching using only internal edges (odd number of vertices). Therefore, at least one edge must connect to the outside: $sum_(e in delta(U)) x_e >= 1$. This constraint is necessary and sufficient for the convex hull to equal the integer hull.
-]
-
-== Dual Formulation and Optimality Conditions
-
-#definition[
-  *MWPM Dual Problem:* The dual of the MWPM linear program is:
-  $ max_(bold(y)) sum_(v in V) y_v + sum_(O in cal(O)(G)) y_O $
-  subject to:
-  $ lambda_e = w_e - (y_(v_1) + y_(v_2)) - sum_(O: e in delta(O)) y_O >= 0 quad forall e in E \
-  y_O >= 0 quad forall O in cal(O)(G) $
-
-  where $lambda_e$ is the *slack* of edge $e$.
-]
-
-#theorem("KKT Complementary Slackness")[
-  Primal solution $bold(x)$ and dual solution $(bold(y), {y_O})$ are optimal if and only if:
-  1. *Primal feasibility:* $sum_(e in delta({v})) x_e = 1$, $sum_(e in delta(U)) x_e >= 1$, $x_e >= 0$
-  2. *Dual feasibility:* $lambda_e >= 0$, $y_O >= 0$
-  3. *Complementary slackness:*
-     - $lambda_e x_e = 0$ (tight edges are in matching)
-     - $y_O (sum_(e in delta(O)) x_e - 1) = 0$ (tight odd sets have positive dual)
-]
-
-== The Blossom Algorithm
-
-The Blossom algorithm, developed by Edmonds (1965), solves MWPM by maintaining primal and dual feasibility while growing alternating trees.
-
-#definition[
-  *Alternating structures:*
-  - *M-alternating walk:* Path $(v_0, v_1, ..., v_t)$ where edges alternate between $M$ and $E without M$
-  - *M-augmenting path:* M-alternating walk with both endpoints unmatched
-  - *M-blossom:* Odd-length cycle in an M-alternating walk where edges alternate in/out of $M$
-]
-
-#keypoint[
-  *Algorithm overview:*
-
-  1. *Initialization:* Start with empty matching $M = emptyset$, dual variables $y_v = 0$
-
-  2. *Main loop:* While $M$ is not perfect:
-     - *Search:* Find M-alternating walks from unmatched vertices
-     - *Augment:* If M-augmenting path found, flip edges along path (add unmatched edges, remove matched edges)
-     - *Shrink:* If M-blossom found, contract it to a single vertex, update dual variables
-     - *Grow:* If no path/blossom found, increase dual variables to make new edges tight, add to search tree
-     - *Expand:* When blossom dual variable reaches zero, uncontract it
-
-  3. *Termination:* When all vertices are matched, return $M$
-]
-
-#theorem("Blossom Algorithm Correctness and Complexity")[
-  The Blossom algorithm:
-  1. Maintains primal feasibility, dual feasibility, and complementary slackness throughout
-  2. Terminates with an optimal MWPM
-  3. Runs in $O(|V|^3)$ time with careful implementation
-
-  *Iteration bounds:*
-  - Augmentations: at most $|V|\/2$
-  - Contractions: at most $2|V|$
-  - Expansions: at most $2|V|$
-  - Edge additions: at most $3|V|$
-  - Total: $O(|V|^2)$ iterations, each taking $O(|V|)$ time
-]
-
-#keypoint[
-  *Why MWPM for quantum codes:*
-  - Surface codes and other topological codes have parity check matrices where each error triggers at most 2 stabilizers
-  - This structure allows efficient MLD via MWPM
-  - Blossom algorithm provides polynomial-time optimal decoding
-  - Practical implementations achieve near-optimal thresholds (~10-11% for surface codes)
-  - Contrast with BP: MWPM finds global optimum but is slower; BP is faster but can get trapped in local minima
-]
-
-#pagebreak()
-
-= Results and Performance
-
-== Error Threshold
-
-#definition[
-  The *threshold* $p_"th"$ is the maximum error rate below which the logical error rate decreases with increasing code distance.
-
-  - If $p < p_"th"$: Larger codes $arrow.r$ exponentially better protection
-  - If $p > p_"th"$: Larger codes $arrow.r$ worse protection (error correction fails)
-]
-
-== Experimental Results
-
-#figure(
-  table(
-    columns: 4,
-    align: center,
-    stroke: 0.5pt,
-    [*Code Family*], [*BP Only*], [*BP+OSD-0*], [*BP+OSD-CS*],
-    [Toric], [N/A (fails)], [$9.2 plus.minus 0.2%$], [$bold(9.9 plus.minus 0.2%)$],
-    [Semi-topological], [N/A (fails)], [$9.1 plus.minus 0.2%$], [$bold(9.7 plus.minus 0.2%)$],
-    [Random QLDPC], [$6.5 plus.minus 0.1%$], [$6.7 plus.minus 0.1%$], [$bold(7.1 plus.minus 0.1%)$],
-  ),
-  caption: [Observed thresholds from the paper]
-)
-
-#box(
-  width: 100%,
-  stroke: 1pt + green,
-  inset: 12pt,
-  radius: 4pt,
-  fill: rgb("#f5fff5"),
-  [
-    #text(weight: "bold")[Key Results for Toric Code]
-
-    - *BP alone:* Complete failure due to degeneracy (no threshold)
-    - *BP+OSD-CS:* 9.9% threshold (optimal decoder achieves 10.3%)
-    - *Improvement:* Combination sweep gains ~0.7% over OSD-0
-    - *Low-error regime:* Exponential suppression of logical errors
-  ]
-)
-
-== Complexity
-
-#figure(
-  table(
-    columns: 3,
-    align: (left, center, left),
-    stroke: 0.5pt,
-    [*Component*], [*Complexity*], [*Notes*],
-    [BP (per iteration)], [$O(n)$], [Linear in block length],
-    [OSD-0], [$O(n^3)$], [Dominated by matrix inversion],
-    [Combination sweep], [$O(lambda^2)$], [$lambda = 60 arrow.r$ ~1830 trials],
-    [*Total*], [$O(n^3)$], [Practical for moderate $n$],
-  ),
-  caption: [Complexity analysis]
-)
-
-#pagebreak()
-
 = Tropical Tensor Network
 
 In this section, we introduce a complementary approach to decoding: *tropical tensor networks*. While BP+OSD performs approximate inference followed by algebraic post-processing, tropical tensor networks provide a framework for *exact* maximum a posteriori (MAP) inference by reformulating the problem in terms of tropical algebra.
@@ -3687,6 +1923,1597 @@ The computational complexity of tropical tensor network contraction is governed 
 
 #pagebreak()
 
+
+// = Quantum Error Correction Basics
+
+// == Qubits and Quantum States
+
+// #definition[
+//   A *qubit* is a quantum two-level system. Its state is written using *ket notation*:
+//   $ |psi〉 = alpha |0〉 + beta |1〉 $
+
+//   where:
+//   - $|0〉 = mat(1; 0)$ and $|1〉 = mat(0; 1)$ are the *computational basis states*
+//   - $alpha, beta$ are complex numbers with $|alpha|^2 + |beta|^2 = 1$
+//   - The ket symbol $|dot〉$ is standard notation for quantum states
+// ]
+
+// Common quantum states include:
+// - $|0〉, |1〉$ = computational basis
+// - $|+〉 = 1/sqrt(2)(|0〉 + |1〉)$ = superposition (plus state)
+// - $|-〉 = 1/sqrt(2)(|0〉 - |1〉)$ = superposition (minus state)
+
+// == Pauli Operators
+
+// #definition[
+//   The *Pauli operators* are the fundamental single-qubit error operations:
+
+//   #figure(
+//     table(
+//       columns: 4,
+//       align: center,
+//       [*Symbol*], [*Matrix*], [*Binary repr.*], [*Effect on states*],
+//       [$bb(1)$ (Identity)], [$mat(1,0;0,1)$], [$(0,0)$], [No change],
+//       [$X$ (bit flip)], [$mat(0,1;1,0)$], [$(1,0)$], [$|0〉 arrow.l.r |1〉$],
+//       [$Z$ (phase flip)], [$mat(1,0;0,-1)$], [$(0,1)$], [$|+〉 arrow.l.r |-〉$],
+//       [$Y = i X Z$], [$mat(0,-i;i,0)$], [$(1,1)$], [Both flips],
+//     ),
+//     caption: [Pauli operators]
+//   )
+// ]
+
+// #keypoint[
+//   Quantum errors are modeled as random Pauli operators:
+//   - *X errors* = bit flips (like classical errors)
+//   - *Z errors* = phase flips (uniquely quantum, no classical analogue)
+//   - *Y errors* = both (can be written as $Y = i X Z$)
+// ]
+
+// #pagebreak()
+
+// == Binary Representation of Pauli Errors
+
+// #definition[
+//   An $n$-qubit Pauli error $E$ can be written in *binary representation*:
+//   $ E arrow.r.bar bold(e)_Q = (bold(x), bold(z)) $
+
+//   where:
+//   - $bold(x) = (x_1, ..., x_n)$ indicates X components ($x_j = 1$ means X error on qubit $j$)
+//   - $bold(z) = (z_1, ..., z_n)$ indicates Z components ($z_j = 1$ means Z error on qubit $j$)
+// ]
+
+// For example, the error $E = X_1 Z_3$ on 3 qubits (X on qubit 1, Z on qubit 3) has binary representation:
+// $ bold(e)_Q = (bold(x), bold(z)) = ((1,0,0), (0,0,1)) $
+
+// == CSS Codes
+
+// #definition[
+//   A *CSS code* (Calderbank-Shor-Steane code) is a quantum error-correcting code with a structure that allows X and Z errors to be corrected independently.
+
+//   A CSS code is defined by two classical parity check matrices $H_X$ and $H_Z$ satisfying:
+//   $ H_X dot H_Z^T = bold(0) quad ("orthogonality constraint") $
+
+//   The combined quantum parity check matrix is:
+//   $ H_"CSS" = mat(H_Z, bold(0); bold(0), H_X) $
+// ]
+
+// #keypoint[
+//   The orthogonality constraint $H_X dot H_Z^T = bold(0)$ ensures that the quantum stabilizers *commute* (a necessary condition for valid quantum codes).
+// ]
+
+// #pagebreak()
+
+// == Syndrome Measurement in CSS Codes
+
+// For a CSS code with error $E arrow.r.bar bold(e)_Q = (bold(x), bold(z))$:
+
+// #definition[
+//   The *quantum syndrome* is:
+//   $ bold(s)_Q = (bold(s)_x, bold(s)_z) = (H_Z dot bold(x), H_X dot bold(z)) $
+
+//   - $bold(s)_x = H_Z dot bold(x)$ detects X (bit-flip) errors
+//   - $bold(s)_z = H_X dot bold(z)$ detects Z (phase-flip) errors
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+
+//     // X-error decoding
+//     rect((-4, 0.8), (-0.5, 2), fill: rgb("#e8f4e8"), name: "xbox")
+//     content((-2.25, 1.6), [X-error decoding])
+//     content((-2.25, 1.1), text(size: 9pt)[$H_Z dot bold(x) = bold(s)_x$])
+
+//     // Z-error decoding
+//     rect((0.5, 0.8), (4, 2), fill: rgb("#e8e8f4"), name: "zbox")
+//     content((2.25, 1.6), [Z-error decoding])
+//     content((2.25, 1.1), text(size: 9pt)[$H_X dot bold(z) = bold(s)_z$])
+
+//     // Label
+//     content((0, 0.2), text(size: 9pt)[Two independent classical problems!])
+//   }),
+//   caption: [CSS codes allow independent X and Z decoding]
+// )
+
+// #keypoint[
+//   CSS codes allow *independent decoding*:
+//   - Decode X errors using matrix $H_Z$ and syndrome $bold(s)_x$
+//   - Decode Z errors using matrix $H_X$ and syndrome $bold(s)_z$
+
+//   Each is a classical syndrome decoding problem — so BP can be applied!
+// ]
+
+// == Quantum Code Parameters
+
+// Quantum codes use double-bracket notation $[[n, k, d]]$:
+// - $n$ = number of physical qubits
+// - $k$ = number of logical qubits encoded
+// - $d$ = code distance (minimum weight of undetectable errors)
+
+// Compare to classical $[n, k, d]$ notation (single brackets).
+
+// #definition[
+//   A *quantum LDPC (QLDPC) code* is a CSS code where $H_"CSS"$ is sparse.
+
+//   An *$(l_Q, q_Q)$-QLDPC code* has:
+//   - Each column of $H_"CSS"$ has at most $l_Q$ ones
+//   - Each row of $H_"CSS"$ has at most $q_Q$ ones
+// ]
+
+// #pagebreak()
+
+// == The Hypergraph Product Construction
+
+// #definition[
+//   The *hypergraph product* constructs a quantum CSS code from a classical code.
+
+//   Given classical code with $m times n$ parity check matrix $H$:
+
+//   $ H_X = mat(H times.o bb(1)_n, bb(1)_m times.o H^T) $
+//   $ H_Z = mat(bb(1)_n times.o H, H^T times.o bb(1)_m) $
+
+//   Where:
+//   - $times.o$ = *Kronecker product* (tensor product of matrices)
+//   - $bb(1)_n$ = $n times n$ identity matrix
+//   - $H^T$ = transpose of $H$
+// ]
+
+// A well-known example is the *Toric Code*, which is the hypergraph product of the ring code (cyclic repetition code). From a classical $[n, 1, n]$ ring code, we obtain a quantum $[[2n^2, 2, n]]$ Toric code. Its properties include:
+// - $(4, 4)$-QLDPC: each stabilizer involves at most 4 qubits
+// - High threshold (~10.3% with optimal decoder)
+// - Rate $R = 2/(2n^2) arrow.r 0$ as $n arrow.r infinity$
+
+// #pagebreak()
+
+// == Surface Codes: A Comprehensive Introduction
+
+// The *surface code* @kitaev2003fault @bravyi1998quantum is the most studied and practically promising quantum error-correcting code. It belongs to the family of *topological codes*, where quantum information is encoded in global, topological degrees of freedom that are inherently protected from local errors.
+
+// === Stabilizer Formalism for Surface Codes
+
+// #definition[
+//   A *stabilizer code* is defined by an Abelian subgroup $cal(S)$ of the $n$-qubit Pauli group $"Pauli"(n)$, generated by a set of independent generators $bb(g) = {g_1, dots, g_(n-k)}$.
+  
+//   The *code space* $V(cal(S))$ is the simultaneous $+1$-eigenspace of all stabilizers:
+//   $ V(cal(S)) = {|psi angle.r : g_i |psi angle.r = |psi angle.r, forall g_i in bb(g)} $
+  
+//   This subspace has dimension $2^k$, encoding $k$ logical qubits into $n$ physical qubits.
+// ]
+
+// For a Pauli error $E$ acting on a code state $|c angle.r in V(cal(S))$:
+// $ g_i E |c angle.r = (-1)^(l_i(E)) E |c angle.r $
+
+// where the *syndrome bit* $l_i(E)$ indicates whether $E$ anticommutes with stabilizer $g_i$. Measuring all stabilizers yields the syndrome vector $bold(l)(E) = (l_1, dots, l_(n-k))$, which identifies the error's equivalence class.
+
+// #keypoint[
+//   *Error correction criterion:* A stabilizer code corrects a set of errors $bb(E)$ if and only if:
+//   $ forall E in bb(E): quad bb(E) sect (E dot bold(C)(cal(S)) - E dot cal(S)) = emptyset $
+  
+//   where $bold(C)(cal(S))$ is the *centralizer* of $cal(S)$ (Pauli operators commuting with all stabilizers). Errors in $E dot cal(S)$ are *degenerate* (equivalent to $E$), while errors in $bold(C)(cal(S)) - cal(S)$ are *logical operators* that transform between codewords.
+// ]
+
+// === The Toric Code: Surface Code on a Torus
+
+// #definition[
+//   The *toric code* @kitaev2003fault is defined on a square lattice embedded on a torus, with qubits placed on edges. For an $L times L$ lattice, the code has parameters $[[2L^2, 2, L]]$.
+  
+//   Stabilizer generators are of two types:
+//   - *Star operators* $A_v = product_(e in "star"(v)) X_e$: product of $X$ on all edges meeting at vertex $v$
+//   - *Plaquette operators* $B_p = product_(e in "boundary"(p)) Z_e$: product of $Z$ on all edges bounding plaquette $p$
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+    
+//     // Draw a 3x3 grid representing the toric code lattice
+//     let grid_size = 3
+//     let spacing = 1.5
+    
+//     // Vertices (circles)
+//     for i in range(grid_size) {
+//       for j in range(grid_size) {
+//         circle((i * spacing, j * spacing), radius: 0.08, fill: black)
+//       }
+//     }
+    
+//     // Horizontal edges with qubits
+//     for i in range(grid_size - 1) {
+//       for j in range(grid_size) {
+//         line((i * spacing + 0.1, j * spacing), ((i + 1) * spacing - 0.1, j * spacing), stroke: gray)
+//         circle(((i + 0.5) * spacing, j * spacing), radius: 0.12, fill: blue.lighten(60%))
+//       }
+//     }
+    
+//     // Vertical edges with qubits
+//     for i in range(grid_size) {
+//       for j in range(grid_size - 1) {
+//         line((i * spacing, j * spacing + 0.1), (i * spacing, (j + 1) * spacing - 0.1), stroke: gray)
+//         circle((i * spacing, (j + 0.5) * spacing), radius: 0.12, fill: blue.lighten(60%))
+//       }
+//     }
+    
+//     // Highlight a star operator (red X)
+//     let star_x = 1.5
+//     let star_y = 1.5
+//     circle((star_x, star_y), radius: 0.25, stroke: red + 2pt, fill: red.lighten(90%))
+//     content((star_x, star_y), text(size: 8pt, fill: red)[$A_v$])
+    
+//     // Highlight a plaquette operator (blue Z)
+//     rect((0.5 * spacing + 0.15, 0.5 * spacing + 0.15), (1.5 * spacing - 0.15, 1.5 * spacing - 0.15), 
+//          stroke: blue + 2pt, fill: blue.lighten(90%))
+//     content((spacing, spacing), text(size: 8pt, fill: blue)[$B_p$])
+    
+//     // Legend
+//     content((4.5, 2.5), text(size: 8pt)[Qubits on edges])
+//     content((4.5, 2), text(size: 8pt, fill: red)[$A_v = X X X X$ (star)])
+//     content((4.5, 1.5), text(size: 8pt, fill: blue)[$B_p = Z Z Z Z$ (plaquette)])
+//   }),
+//   caption: [Toric code lattice: qubits reside on edges, star operators ($A_v$) act on edges meeting at vertices, plaquette operators ($B_p$) act on edges surrounding faces.]
+// )
+
+// The star and plaquette operators satisfy:
+// - *Commutativity:* $[A_v, A_(v')] = [B_p, B_(p')] = [A_v, B_p] = 0$ for all $v, v', p, p'$
+// - *Redundancy:* $product_v A_v = product_p B_p = bb(1)$ (only $2L^2 - 2$ independent generators)
+// - *Topological protection:* Logical operators correspond to non-contractible loops on the torus
+
+// #keypoint[
+//   *Topological interpretation:* Errors create *anyonic excitations* at their endpoints:
+//   - $X$ errors create pairs of $m$-anyons (plaquette violations)
+//   - $Z$ errors create pairs of $e$-anyons (star violations)
+  
+//   A logical error occurs when an anyon pair is created, transported around a non-contractible cycle, and annihilated—this cannot be detected by local stabilizer measurements.
+// ]
+
+// === Planar Surface Code with Boundaries
+
+// For practical implementations, we use a *planar* version with open boundaries @bravyi1998quantum @dennis2002topological:
+
+// #definition[
+//   The *planar surface code* is defined on a square patch with two types of boundaries:
+//   - *Rough boundaries* (top/bottom): where $X$-type stabilizers are truncated
+//   - *Smooth boundaries* (left/right): where $Z$-type stabilizers are truncated
+  
+//   A distance-$d$ planar code has parameters $[[d^2 + (d-1)^2, 1, d]]$ for storing one logical qubit, or approximately $[[2d^2, 1, d]]$.
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+    
+//     // Draw planar surface code with boundaries
+//     let size = 4
+//     let s = 0.9
+    
+//     // Background to show boundary types
+//     rect((-0.3, -0.3), (size * s + 0.3, size * s + 0.3), fill: white, stroke: none)
+    
+//     // Rough boundaries (top and bottom) - red
+//     line((-0.2, -0.2), (size * s + 0.2, -0.2), stroke: red + 3pt)
+//     line((-0.2, size * s + 0.2), (size * s + 0.2, size * s + 0.2), stroke: red + 3pt)
+    
+//     // Smooth boundaries (left and right) - blue  
+//     line((-0.2, -0.2), (-0.2, size * s + 0.2), stroke: blue + 3pt)
+//     line((size * s + 0.2, -0.2), (size * s + 0.2, size * s + 0.2), stroke: blue + 3pt)
+    
+//     // Draw checkerboard pattern for X and Z stabilizers
+//     for i in range(size) {
+//       for j in range(size) {
+//         let x = i * s
+//         let y = j * s
+//         let color = if calc.rem(i + j, 2) == 0 { rgb("#ffe0e0") } else { rgb("#e0e0ff") }
+//         rect((x, y), (x + s, y + s), fill: color, stroke: gray + 0.5pt)
+//       }
+//     }
+    
+//     // Qubits at vertices
+//     for i in range(size + 1) {
+//       for j in range(size + 1) {
+//         circle((i * s, j * s), radius: 0.08, fill: black)
+//       }
+//     }
+    
+//     // Logical operators
+//     // Logical X - horizontal path (rough to rough)
+//     for i in range(size) {
+//       circle((i * s + s/2, 0), radius: 0.12, fill: green.lighten(40%), stroke: green + 1.5pt)
+//     }
+    
+//     // Logical Z - vertical path (smooth to smooth)
+//     for j in range(size) {
+//       circle((0, j * s + s/2), radius: 0.12, fill: purple.lighten(40%), stroke: purple + 1.5pt)
+//     }
+    
+//     // Legend
+//     content((5.5, 3), text(size: 8pt, fill: red)[Rough boundary])
+//     content((5.5, 2.5), text(size: 8pt, fill: blue)[Smooth boundary])
+//     content((5.5, 2), text(size: 8pt, fill: green)[$X_L$: rough $arrow.r$ rough])
+//     content((5.5, 1.5), text(size: 8pt, fill: purple)[$Z_L$: smooth $arrow.r$ smooth])
+//   }),
+//   caption: [Planar surface code with rough (red) and smooth (blue) boundaries. Logical $X_L$ connects rough boundaries; logical $Z_L$ connects smooth boundaries.]
+// )
+
+// The boundary conditions determine the logical operators:
+// - *Logical $X_L$:* String of $X$ operators connecting the two rough boundaries
+// - *Logical $Z_L$:* String of $Z$ operators connecting the two smooth boundaries
+
+// #keypoint[
+//   *Code distance:* The minimum weight of a logical operator equals $d$, the lattice width. To cause a logical error, noise must create a string of errors spanning the entire code—an event exponentially suppressed for $p < p_"th"$.
+// ]
+
+// === The Rotated Surface Code
+
+// The *rotated surface code* @bombin2007optimal @tomita2014low is a more hardware-efficient variant:
+
+// #definition[
+//   The *rotated surface code* is obtained by rotating the standard surface code lattice by 45°. Qubits are placed on vertices of a checkerboard pattern, with:
+//   - $X$-type stabilizers on one color (e.g., white squares)
+//   - $Z$-type stabilizers on the other color (e.g., gray squares)
+  
+//   For distance $d$, the code has parameters $[[d^2, 1, d]]$—roughly half the qubits of the standard planar code at the same distance.
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+//     surface-code((0, 0), size: 1.5, 3, 3)
+    
+//     // Labels
+//     content((5, 2), text(size: 9pt)[Distance $d = 3$])
+//     content((5, 1.5), text(size: 9pt)[$[[9, 1, 3]]$ code])
+//     content((5, 1), text(size: 9pt)[9 data qubits])
+//     content((5, 0.5), text(size: 9pt)[8 ancilla qubits])
+//   }),
+//   caption: [Rotated surface code with $d = 3$. Data qubits (circles) sit at corners where stabilizer plaquettes meet. This is also known as the Surface-17 code (9 data + 8 ancilla qubits).]
+// )
+
+// #figure(
+//   table(
+//     columns: (auto, auto, auto, auto, auto),
+//     align: center,
+//     stroke: 0.5pt,
+//     inset: 8pt,
+//     [*Distance $d$*], [*Data qubits*], [*Ancilla qubits*], [*Total qubits*], [*Code*],
+//     [3], [$9$], [$8$], [$17$], [Surface-17],
+//     [5], [$25$], [$24$], [$49$], [Surface-49],
+//     [7], [$49$], [$48$], [$97$], [Surface-97],
+//     [$d$], [$d^2$], [$d^2 - 1$], [$2d^2 - 1$], [General],
+//   ),
+//   caption: [Rotated surface code parameters for various distances]
+// )
+
+// === Syndrome Extraction Circuits
+
+// Practical surface code implementations require *syndrome extraction circuits* that measure stabilizers without destroying the encoded information @fowler2012surface:
+
+// #definition[
+//   *Syndrome extraction* uses ancilla qubits to measure stabilizers via the Hadamard test:
+//   1. Initialize ancilla in $|0 angle.r$ (for $Z$-stabilizers) or $|+ angle.r$ (for $X$-stabilizers)
+//   2. Apply controlled operations between ancilla and data qubits
+//   3. Measure ancilla to obtain syndrome bit
+  
+//   The measurement outcome indicates whether the stabilizer eigenvalue is $+1$ (result 0) or $-1$ (result 1).
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+    
+//     // Draw syndrome extraction circuit schematic
+//     content((0, 3), text(size: 9pt)[*$X$-stabilizer measurement:*])
+    
+//     // Ancilla line
+//     line((1, 2), (6, 2), stroke: gray)
+//     content((0.5, 2), text(size: 8pt)[$|0 angle.r$])
+//     rect((1.2, 1.8), (1.8, 2.2), fill: yellow.lighten(70%))
+//     content((1.5, 2), text(size: 8pt)[$H$])
+    
+//     // Data qubit lines
+//     for i in range(4) {
+//       let y = 0.8 - i * 0.4
+//       line((1, y), (6, y), stroke: gray)
+//       content((0.5, y), text(size: 8pt)[$q_#(i+1)$])
+//     }
+    
+//     // CNOT gates (ancilla controls)
+//     for (i, x) in ((0, 2.5), (1, 3.2), (2, 3.9), (3, 4.6)) {
+//       let y = 0.8 - i * 0.4
+//       circle((x, 2), radius: 0.08, fill: black)
+//       line((x, 2 - 0.08), (x, y + 0.12))
+//       circle((x, y), radius: 0.12, stroke: black + 1pt)
+//       line((x - 0.12, y), (x + 0.12, y))
+//       line((x, y - 0.12), (x, y + 0.12))
+//     }
+    
+//     // Final Hadamard and measurement
+//     rect((5.2, 1.8), (5.8, 2.2), fill: yellow.lighten(70%))
+//     content((5.5, 2), text(size: 8pt)[$H$])
+//     rect((6.2, 1.7), (6.8, 2.3), fill: gray.lighten(70%))
+//     content((6.5, 2), text(size: 8pt)[$M$])
+    
+//     // Z-stabilizer label
+//     content((0, -1.2), text(size: 9pt)[*$Z$-stabilizer:* Replace $H$ gates with identity, CNOT targets become controls])
+//   }),
+//   caption: [Syndrome extraction circuit for a weight-4 $X$-stabilizer. The ancilla mediates the measurement without collapsing the encoded state.]
+// )
+
+// #keypoint[
+//   *Hook errors and scheduling:* The order of CNOT gates matters! A single fault in the syndrome extraction circuit can propagate to multiple data qubits, creating *hook errors*. Careful scheduling (e.g., the "Z-shape" or "N-shape" order) minimizes error propagation while allowing parallel $X$ and $Z$ syndrome extraction.
+// ]
+
+// === Repeated Syndrome Measurement
+
+// A single syndrome measurement can itself be faulty. To achieve fault tolerance, we perform *multiple rounds* of syndrome extraction:
+
+// #definition[
+//   In *repeated syndrome measurement* with $r$ rounds:
+//   1. Measure all stabilizers $r$ times (typically $r = d$ for distance-$d$ code)
+//   2. Track syndrome *changes* between consecutive rounds
+//   3. Decode using the full spacetime syndrome history
+  
+//   Syndrome changes form a 3D structure: 2D spatial syndrome + 1D time axis.
+// ]
+
+// This creates a *3D decoding problem*:
+// - *Space-like errors:* Pauli errors on data qubits appear as pairs of adjacent syndromes in space
+// - *Time-like errors:* Measurement errors appear as pairs of syndromes in time at the same location
+// - *Hook errors:* Correlated space-time error patterns from circuit faults
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+    
+//     // Draw 3D spacetime diagram
+//     let dx = 0.8
+//     let dy = 0.5
+//     let dz = 0.7
+    
+//     // Time slices
+//     for t in range(4) {
+//       let offset_x = t * 0.3
+//       let offset_y = t * dz
+      
+//       // Grid for this time slice
+//       for i in range(3) {
+//         for j in range(3) {
+//           let x = i * dx + offset_x
+//           let y = j * dy + offset_y
+//           circle((x, y), radius: 0.06, fill: gray.lighten(50%))
+//         }
+//       }
+      
+//       // Connect to form grid
+//       for i in range(2) {
+//         for j in range(3) {
+//           let x1 = i * dx + offset_x
+//           let x2 = (i + 1) * dx + offset_x
+//           let y = j * dy + offset_y
+//           line((x1 + 0.06, y), (x2 - 0.06, y), stroke: gray + 0.5pt)
+//         }
+//       }
+//       for i in range(3) {
+//         for j in range(2) {
+//           let x = i * dx + offset_x
+//           let y1 = j * dy + offset_y
+//           let y2 = (j + 1) * dy + offset_y
+//           line((x, y1 + 0.06), (x, y2 - 0.06), stroke: gray + 0.5pt)
+//         }
+//       }
+      
+//       content((2.8 + offset_x, 0 + offset_y), text(size: 7pt)[$t = #t$])
+//     }
+    
+//     // Highlight some syndrome events
+//     circle((0.8 + 0.3, 0.5 + 0.7), radius: 0.1, fill: red)
+//     circle((0.8 + 0.6, 0.5 + 1.4), radius: 0.1, fill: red)
+//     line((0.8 + 0.3, 0.5 + 0.7 + 0.1), (0.8 + 0.6, 0.5 + 1.4 - 0.1), stroke: red + 1.5pt)
+    
+//     // Space-like error
+//     circle((0 + 0.9, 1 + 2.1), radius: 0.1, fill: blue)
+//     circle((0.8 + 0.9, 1 + 2.1), radius: 0.1, fill: blue)
+//     line((0 + 0.9 + 0.1, 1 + 2.1), (0.8 + 0.9 - 0.1, 1 + 2.1), stroke: blue + 1.5pt)
+    
+//     // Legend
+//     content((4.5, 2.5), text(size: 8pt, fill: red)[Time-like error])
+//     content((4.5, 2.1), text(size: 8pt, fill: red)[(measurement fault)])
+//     content((4.5, 1.6), text(size: 8pt, fill: blue)[Space-like error])
+//     content((4.5, 1.2), text(size: 8pt, fill: blue)[(data qubit fault)])
+//   }),
+//   caption: [Spacetime syndrome history. Time-like edges (red) represent measurement errors; space-like edges (blue) represent data qubit errors.]
+// )
+
+// === Decoders for Surface Codes
+
+// Several decoding algorithms exist for surface codes, with different trade-offs between accuracy and speed:
+
+// #figure(
+//   table(
+//     columns: (auto, auto, auto, auto),
+//     align: (left, center, center, left),
+//     stroke: 0.5pt,
+//     inset: 8pt,
+//     [*Decoder*], [*Complexity*], [*Threshold*], [*Notes*],
+//     [Maximum Likelihood], [$O(n^2)$ to $hash P$-hard], [$tilde 10.3%$], [Optimal but often intractable],
+//     [MWPM @dennis2002topological], [$O(n^3)$], [$tilde 10.3%$], [Near-optimal, polynomial time],
+//     [Union-Find @delfosse2021almost], [$O(n alpha(n))$], [$tilde 9.9%$], [Nearly linear, practical],
+//     [BP+OSD @roffe2020decoding], [$O(n^2)$], [$tilde 7-8%$], [General QLDPC decoder],
+//     [Neural Network], [Varies], [$tilde 10%$], [Learning-based, fast inference],
+//   ),
+//   caption: [Comparison of surface code decoders. Thresholds shown are for phenomenological noise; circuit-level thresholds are typically $0.5$--$1%$.]
+// )
+
+// The *Minimum Weight Perfect Matching (MWPM)* decoder @dennis2002topological exploits the surface code structure:
+// 1. Construct a complete graph with syndrome defects as vertices
+// 2. Edge weights are negative log-likelihoods of error chains
+// 3. Find minimum-weight perfect matching using Edmonds' blossom algorithm
+// 4. Infer error chain from matched pairs
+
+// #keypoint[
+//   *Why MWPM works for surface codes:* The mapping from errors to syndromes has a special structure—each error creates exactly two syndrome defects at its endpoints. Finding the most likely error pattern reduces to pairing up defects optimally, which is exactly the minimum-weight perfect matching problem.
+// ]
+
+// === Threshold and Scaling Behavior
+
+// The surface code exhibits a *threshold* phenomenon:
+
+// #definition[
+//   The *error threshold* $p_"th"$ is the physical error rate below which:
+//   $ lim_(d arrow.r infinity) p_L(d, p) = 0 quad "for" p < p_"th" $
+  
+//   where $p_L(d, p)$ is the logical error rate for distance $d$ at physical error rate $p$.
+  
+//   Below threshold, the logical error rate scales as:
+//   $ p_L approx A (p / p_"th")^(ceil(d\/2)) $
+  
+//   for some constant $A$, achieving *exponential suppression* with increasing distance.
+// ]
+
+// #figure(
+//   table(
+//     columns: (auto, auto, auto),
+//     align: (left, center, left),
+//     stroke: 0.5pt,
+//     inset: 8pt,
+//     [*Noise Model*], [*Threshold*], [*Reference*],
+//     [Code capacity (perfect measurement)], [$tilde 10.3%$], [Dennis et al. 2002],
+//     [Phenomenological (noisy measurement)], [$tilde 2.9$--$3.3%$], [Wang et al. 2003],
+//     [Circuit-level depolarizing], [$tilde 0.5$--$1%$], [Various],
+//     [Circuit-level with leakage], [$tilde 0.3$--$0.5%$], [Various],
+//   ),
+//   caption: [Surface code thresholds under different noise models. Circuit-level noise is most realistic but has the lowest threshold.]
+// )
+
+// === Experimental Realizations
+
+// The surface code has been demonstrated in multiple experimental platforms @google2023suppressing @acharya2024quantum:
+
+// #keypoint[
+//   *Google Quantum AI (2023):* Demonstrated that increasing code distance from $d = 3$ to $d = 5$ reduces logical error rate by a factor of $tilde 2$, providing the first evidence of *below-threshold* operation in a surface code.
+  
+//   *Google Quantum AI (2024):* Achieved logical error rates of $0.14%$ per round with $d = 7$ surface code on the Willow processor, demonstrating clear exponential suppression with distance.
+// ]
+
+// Key experimental milestones include:
+// - *2021:* First demonstration of repeated error correction cycles (Google, IBM)
+// - *2023:* First evidence of exponential error suppression with distance (Google)
+// - *2024:* Below-threshold operation with high-distance codes (Google Willow)
+
+// === Fault-Tolerant Operations via Lattice Surgery
+
+// Universal fault-tolerant quantum computation requires operations beyond error correction. *Lattice surgery* @horsman2012surface @litinski2019game enables logical gates by merging and splitting surface code patches:
+
+// #definition[
+//   *Lattice surgery* performs logical operations by:
+//   - *Merge:* Join two surface code patches by measuring joint stabilizers along their boundary
+//   - *Split:* Separate a merged patch by measuring individual stabilizers
+  
+//   These operations implement logical Pauli measurements, enabling Clifford gates and, with magic state distillation, universal computation.
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+    
+//     // Two separate patches
+//     rect((0, 0), (1.5, 1.5), fill: blue.lighten(80%), stroke: blue + 1pt)
+//     content((0.75, 0.75), text(size: 10pt)[$|psi_1 angle.r$])
+    
+//     rect((2.5, 0), (4, 1.5), fill: green.lighten(80%), stroke: green + 1pt)
+//     content((3.25, 0.75), text(size: 10pt)[$|psi_2 angle.r$])
+    
+//     // Arrow
+//     line((4.5, 0.75), (5.5, 0.75), mark: (end: ">"), stroke: 1.5pt)
+//     content((5, 1.1), text(size: 8pt)[Merge])
+    
+//     // Merged patch
+//     rect((6, 0), (9, 1.5), fill: purple.lighten(80%), stroke: purple + 1pt)
+//     content((7.5, 0.75), text(size: 10pt)[$|psi_1 psi_2 angle.r$ entangled])
+    
+//     // Measurement result
+//     content((7.5, -0.4), text(size: 8pt)[Measures $Z_1 Z_2$ or $X_1 X_2$])
+//   }),
+//   caption: [Lattice surgery: merging two surface code patches measures a joint logical Pauli operator, entangling the encoded qubits.]
+// )
+
+// The merge operation effectively measures:
+// - *Rough merge* (along rough boundaries): Measures $X_1 X_2$
+// - *Smooth merge* (along smooth boundaries): Measures $Z_1 Z_2$
+
+// Combined with single-qubit Cliffords and magic state injection, lattice surgery enables universal fault-tolerant quantum computation entirely within the 2D surface code framework.
+
+// #pagebreak()
+
+// == Manifest of BP+OSD threshold analysis
+// In this section, we implement the BP+OSD decoder on the rotated surface code datasets. The end-to-end workflow consists of three stages: (1) generating detector error models from noisy circuits, (2) building the parity check matrix with hyperedge merging, and (3) estimating logical error rates using soft XOR probability chains.
+
+// === Step 1: Generating Rotated Surface Code DEM Files
+
+// The first step is to generate a *Detector Error Model (DEM)* from a noisy quantum circuit using *Stim*. The DEM captures the probabilistic relationship between physical errors and syndrome patterns.
+
+// #definition[
+//   A *Detector Error Model (DEM)* is a list of *error mechanisms*, each specifying a probability $p$ of occurrence, a set of *detectors* (syndrome bits) that flip when the error occurs, and optionally, *logical observables* that flip when the error occurs.
+// ]
+
+// We use Stim's built-in circuit generator to create rotated surface code memory experiments with circuit-level depolarizing noise:
+
+// ```python
+// import stim
+
+// circuit = stim.Circuit.generated(
+//     "surface_code:rotated_memory_z",
+//     distance=d,        # Code distance
+//     rounds=r,          # Number of syndrome measurement rounds
+//     after_clifford_depolarization=p,      # Noise after gates
+//     before_round_data_depolarization=p,   # Noise on idle qubits
+//     before_measure_flip_probability=p,    # Measurement errors
+//     after_reset_flip_probability=p,       # Reset errors
+// )
+
+// # Extract DEM from circuit
+// dem = circuit.detector_error_model(decompose_errors=True)
+// ```
+
+// The DEM output uses a compact text format. Key elements include:
+
+// #figure(
+//   table(
+//     columns: (auto, auto),
+//     align: (left, left),
+//     stroke: 0.5pt,
+//     inset: 8pt,
+//     [*Syntax*], [*Meaning*],
+//     [`error(0.01) D0 D1`], [Error with $p=0.01$ that triggers detectors $D_0$ and $D_1$],
+//     [`error(0.01) D0 D1 ^ D2`], [*Correlated error*: triggers ${D_0, D_1}$ AND ${D_2}$ simultaneously],
+//     [`error(0.01) D0 L0`], [Error that triggers $D_0$ and flips logical observable $L_0$],
+//     [`detector D0`], [Declares detector $D_0$ (syndrome bit)],
+//     [`logical_observable L0`], [Declares logical observable $L_0$],
+//   ),
+//   caption: [DEM syntax elements. The `^` separator indicates correlated fault mechanisms.]
+// )
+
+// #keypoint[
+//   The `^` *separator* is critical for correct decoding. In `error(p) D0 D1 ^ D2`, the fault triggers *both* patterns ${D_0, D_1}$ and ${D_2}$ simultaneously with probability $p$. These must be treated as separate columns in the parity check matrix $H$, each with the same probability $p$.
+// ]
+
+// === Step 2: Building the Parity Check Matrix $H$
+
+// Converting the DEM to a parity check matrix $H$ for BP decoding requires two critical processing stages.
+
+// ==== Stage 1: Separator Splitting
+
+// DEM errors with `^` separators represent correlated faults that trigger multiple detector patterns simultaneously. These must be split into *separate columns* in $H$:
+
+// #keypoint[
+//   *Example:* Consider `error(0.01) D0 D1 ^ D2 L0`. This splits into two components:
+//   - Component 1: detectors $= {D_0, D_1}$, observables $= {}$, probability $= 0.01$
+//   - Component 2: detectors $= {D_2}$, observables $= {L_0}$, probability $= 0.01$
+  
+//   Each component becomes a *separate column* in the $H$ matrix with the same probability.
+// ]
+
+// The splitting algorithm (from `_split_error_by_separator`):
+
+// ```python
+// def _split_error_by_separator(targets):
+//     components = []
+//     current_detectors, current_observables = [], []
+    
+//     for t in targets:
+//         if t.is_separator():  # ^ found
+//             components.append({
+//                 "detectors": current_detectors,
+//                 "observables": current_observables
+//             })
+//             current_detectors, current_observables = [], []
+//         elif t.is_relative_detector_id():
+//             current_detectors.append(t.val)
+//         elif t.is_logical_observable_id():
+//             current_observables.append(t.val)
+    
+//     # Don't forget the last component
+//     components.append({"detectors": current_detectors, 
+//                        "observables": current_observables})
+//     return components
+// ```
+
+// ==== Stage 2: Hyperedge Merging
+
+// After splitting, errors with *identical detector patterns* are merged into single *hyperedges*. This is essential because:
+// 1. Errors with identical syndromes are *indistinguishable* to the decoder
+// 2. Detectors are XOR-based: two errors triggering the same detector cancel out
+// 3. Merging reduces the factor graph size and improves threshold performance
+
+// #definition[
+//   *Hyperedge Merging:* When two error mechanisms have identical detector patterns, their probabilities are combined using the *XOR formula*:
+//   $ p_"combined" = p_1 + p_2 - 2 p_1 p_2 $
+  
+//   This formula computes $P("odd number of errors fire") = P(A xor B)$.
+// ]
+
+// #proof[
+//   For independent errors $A$ and $B$:
+//   $ P(A xor B) &= P(A) dot (1 - P(B)) + P(B) dot (1 - P(A)) \
+//                &= P(A) + P(B) - 2 P(A) P(B) $
+  
+//   This is exactly the probability that an *odd* number of the two errors occurs, which determines the net syndrome flip (since two flips cancel).
+// ]
+
+// For observable flip tracking, we compute the *conditional probability* $P("obs flip" | "hyperedge fires")$:
+
+// ```python
+// # When merging error with probability prob into existing hyperedge:
+// if has_obs_flip:
+//     # New error flips observable: XOR with existing flip probability
+//     obs_prob_new = obs_prob_old * (1 - prob) + prob * (1 - obs_prob_old)
+// else:
+//     # New error doesn't flip observable
+//     obs_prob_new = obs_prob_old * (1 - prob)
+
+// # Store conditional probability: P(obs flip | hyperedge fires)
+// obs_flip[j] = obs_prob / p_combined
+// ```
+
+// #figure(
+//   table(
+//     columns: (auto, auto, auto),
+//     align: (center, center, center),
+//     stroke: 0.5pt,
+//     inset: 8pt,
+//     [*Mode*], [*$H$ Columns (d=3)*], [*Description*],
+//     [No split, no merge], [$tilde 286$], [Raw DEM errors as columns],
+//     [Split only], [$tilde 556$], [After `^` separator splitting],
+//     [Split + merge (optimal)], [$tilde 400$], [After hyperedge merging],
+//   ),
+//   caption: [Effect of separator splitting and hyperedge merging on $H$ matrix size for $d=3$ rotated surface code. The split+merge approach provides the optimal balance.]
+// )
+
+// The final output is a tuple $(H, "priors", "obs_flip")$ where:
+// - $H$: Parity check matrix of shape $("num_detectors", "num_hyperedges")$
+// - $"priors"$: Prior error probabilities per hyperedge
+// - $"obs_flip"$: Observable flip probabilities $P("obs flip" | "hyperedge fires")$
+
+// === Step 3: Estimating Logical Error Rate
+
+// With the parity check matrix $H$ constructed, we can now decode syndrome samples and estimate the logical error rate.
+
+// ==== Decoding Pipeline
+
+// The BP+OSD decoding pipeline consists of three stages:
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+    
+//     // Boxes
+//     rect((0, 0), (3, 1.5), name: "bp")
+//     content("bp", [*BP Decoder*\ Marginal $P(e_j | bold(s))$])
+    
+//     rect((4.5, 0), (7.5, 1.5), name: "osd")
+//     content("osd", [*OSD Post-Process*\ Hard solution $hat(bold(e))$])
+    
+//     rect((9, 0), (12, 1.5), name: "xor")
+//     content("xor", [*XOR Chain*\ Predict $hat(L)$])
+    
+//     // Arrows
+//     line((3, 0.75), (4.5, 0.75), mark: (end: ">"))
+//     line((7.5, 0.75), (9, 0.75), mark: (end: ">"))
+    
+//     // Input/Output labels
+//     content((1.5, 2), [Syndrome $bold(s)$])
+//     line((1.5, 1.8), (1.5, 1.5), mark: (end: ">"))
+    
+//     content((10.5, -0.7), [Prediction $hat(L) in {0, 1}$])
+//     line((10.5, -0.5), (10.5, 0), mark: (start: ">"))
+//   }),
+//   caption: [BP+OSD decoding pipeline: BP computes soft marginals, OSD finds a hard solution, XOR chain predicts observable.]
+// )
+
+// 1. *BP Decoding*: Given syndrome $bold(s)$, run belief propagation on the factor graph to compute marginal probabilities $P(e_j = 1 | bold(s))$ for each hyperedge $j$.
+
+// 2. *OSD Post-Processing*: Use Ordered Statistics Decoding to find a hard solution $hat(bold(e))$ satisfying $H hat(bold(e)) = bold(s)$, ordered by BP marginals.
+
+// 3. *XOR Probability Chain*: Compute the predicted observable value using soft probabilities.
+
+// ==== XOR Probability Chain for Observable Prediction
+
+// The key insight is that observable prediction must account for the *soft* flip probabilities stored in `obs_flip`. When hyperedges are merged, `obs_flip[j]` contains $P("obs flip" | "hyperedge " j " fires")$, not a binary indicator.
+
+// #theorem("XOR Probability Chain")[
+//   Given a solution $hat(bold(e))$ and observable flip probabilities $"obs_flip"$, the probability of an odd number of observable flips is computed iteratively:
+//   $ P_"flip" = P_"flip" dot (1 - "obs_flip"[j]) + "obs_flip"[j] dot (1 - P_"flip") $
+//   for each $j$ where $hat(e)_j = 1$. The predicted observable is $hat(L) = bb(1)[P_"flip" > 0.5]$.
+// ]
+
+// The implementation:
+
+// ```python
+// def compute_observable_predictions_batch(solutions, obs_flip):
+//     batch_size = solutions.shape[0]
+//     predictions = np.zeros(batch_size, dtype=int)
+    
+//     for b in range(batch_size):
+//         p_flip = 0.0
+//         for i in np.where(solutions[b] == 1)[0]:
+//             # XOR probability: P(A XOR B) = P(A)(1-P(B)) + P(B)(1-P(A))
+//             p_flip = p_flip * (1 - obs_flip[i]) + obs_flip[i] * (1 - p_flip)
+//         predictions[b] = int(p_flip > 0.5)
+    
+//     return predictions
+// ```
+
+// #keypoint[
+//   If `merge_hyperedges=False`, then `obs_flip` contains binary values ${0, 1}$, and the XOR chain reduces to simple parity: $hat(L) = sum_j hat(e)_j dot "obs_flip"[j] mod 2$.
+// ]
+
+// ==== Logical Error Rate Estimation
+
+// The logical error rate (LER) is estimated by comparing predictions to ground truth:
+
+// $ "LER" = 1/N sum_(i=1)^N bb(1)[hat(L)^((i)) eq.not L^((i))] $
+
+// where $N$ is the number of syndrome samples, $hat(L)^((i))$ is the predicted observable for sample $i$, and $L^((i))$ is the ground truth.
+
+// ==== Threshold Analysis
+
+// The *threshold* $p_"th"$ is the physical error rate below which increasing code distance reduces the logical error rate. For rotated surface codes with circuit-level depolarizing noise, the threshold is approximately *0.7%* (Bravyi et al., Nature 2024).
+
+// #figure(
+//   table(
+//     columns: (auto, auto, auto, auto),
+//     align: (center, center, center, center),
+//     stroke: 0.5pt,
+//     inset: 8pt,
+//     [*Distance*], [*$p = 0.005$*], [*$p = 0.007$*], [*$p = 0.009$*],
+//     [$d = 3$], [$tilde 0.03$], [$tilde 0.06$], [$tilde 0.10$],
+//     [$d = 5$], [$tilde 0.01$], [$tilde 0.04$], [$tilde 0.09$],
+//     [$d = 7$], [$tilde 0.005$], [$tilde 0.03$], [$tilde 0.08$],
+//   ),
+//   caption: [Example logical error rates for BP+OSD decoder. Below threshold ($p < 0.007$), larger distances achieve lower LER. Above threshold, the trend reverses.]
+// )
+
+// At the threshold, curves for different distances *cross*: below threshold, larger $d$ gives lower LER; above threshold, larger $d$ gives *higher* LER due to more opportunities for errors to accumulate.
+
+// #pagebreak()
+
+// == BP Convergence and Performance Guarantees
+
+// #theorem("BP Convergence on Trees")[@pearl1988probabilistic @montanari2008belief
+//   If the factor graph $G = (V, U, E)$ is a *tree* (contains no cycles), then BP converges to the *exact* marginal probabilities $P(e_j = 1 | bold(s))$ in at most $d$ iterations, where $d$ is the diameter of the tree (maximum distance between any two nodes).
+// ]
+
+// #proof[
+//   We prove exactness by induction on the tree structure, using the factorization property of graphical models.
+
+//   *Factorization on Trees:* For a tree-structured factor graph, the joint probability distribution factors as:
+//   $ P(bold(x)) = 1/Z product_(a in cal(F)) psi_a(bold(x)_(cal(N)(a))) $
+//   where $cal(F)$ is the set of factors, $cal(N)(a)$ are neighbors of factor $a$, and $Z$ is the partition function.
+
+//   *Key Property:* On a tree, removing any node $v$ separates the graph into disjoint connected components (subtrees). By the global Markov property, variables in different subtrees are conditionally independent given $v$.
+
+//   *Base Case (Leaf Nodes):* Consider a leaf variable node $v$ with single neighbor (factor) $a$. The message $mu_(v arrow.r a)(x_v)$ depends only on the local evidence $P(y_v | x_v)$. Since there are no other dependencies, this message is exact at iteration 1.
+
+//   *Inductive Step:* Assume messages from all nodes at distance $> k$ from root are exact. Consider node $u$ at distance $k$ with neighbors $cal(N)(u) = {a_1, ..., a_m}$.
+
+//   For message $mu_(u arrow.r a_i)(x_u)$, the BP update is:
+//   $ mu_(u arrow.r a_i)(x_u) prop P(y_u | x_u) product_(a_j in cal(N)(u) without {a_i}) mu_(a_j arrow.r u)(x_u) $
+
+//   By the separation property, removing $u$ creates $m$ independent subtrees rooted at ${a_1, ..., a_m}$. By the inductive hypothesis, messages from these subtrees are exact marginals of their respective subtrees. Since subtrees are conditionally independent given $u$, the product of messages equals the joint probability of all subtree configurations, making $mu_(u arrow.r a_i)(x_u)$ exact.
+
+//   *Termination:* After $d$ iterations (where $d$ is the tree diameter), messages have propagated from all leaves to all nodes. Each node's belief $b_v(x_v) prop P(y_v | x_v) product_(a in cal(N)(v)) mu_(a arrow.r v)(x_v)$ equals the exact marginal $P(x_v | bold(y))$ by the factorization property.
+
+//   Therefore, BP computes exact marginals on trees in $d$ iterations.
+// ]
+
+// *Example:* Consider the $[7, 4, 3]$ Hamming code with tree-structured factor graph:
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+
+//     // Data nodes (top)
+//     for (i, x) in ((0, 0), (1, 2), (2, 4), (3, 6)) {
+//       circle((x, 3), radius: 0.3, name: "v" + str(i), fill: rgb("#e0ffe0"))
+//       content("v" + str(i), $v_#i$)
+//     }
+
+//     // Parity nodes (bottom)
+//     for (i, x) in ((0, 1), (1, 3), (2, 5)) {
+//       rect((x - 0.3, -0.3), (x + 0.3, 0.3), name: "u" + str(i), fill: rgb("#ffe0e0"))
+//       content("u" + str(i), $u_#i$)
+//     }
+
+//     // Tree edges (no cycles)
+//     line((0, 2.7), (0.8, 0.3))    // v0-u0
+//     line((2, 2.7), (1.2, 0.3))    // v1-u0
+//     line((2, 2.7), (2.8, 0.3))    // v1-u1
+//     line((4, 2.7), (3.2, 0.3))    // v2-u1
+//     line((4, 2.7), (4.8, 0.3))    // v2-u2
+//     line((6, 2.7), (5.2, 0.3))    // v3-u2
+
+//     content((3, -1.2), text(size: 9pt)[Tree structure: diameter $d = 4$, BP converges in 4 iterations])
+//   }),
+//   caption: [Tree-structured code where BP gives exact solution]
+// )
+
+// For this tree with syndrome $bold(s) = (1, 0, 0)$ and $p = 0.1$:
+// - BP converges in $d = 4$ iterations
+// - Output: $bold(e)^"BP" = (1, 0, 0, 0, 0, 0, 0)$ (single bit flip at position 0)
+// - This is the *exact* maximum likelihood solution
+
+// #v(1em)
+
+// #theorem("BP Performance on Graphs with Cycles")[@richardson2008modern @tatikonda2002loopy
+//   For an $(l, q)$-LDPC code with factor graph of *girth* $g$ (minimum cycle length), BP provides the following guarantees:
+
+//   1. *Local optimality:* If the true error $bold(e)^*$ has Hamming weight $|bold(e)^*| < g\/2$, then BP converges to $bold(e)^*$ with high probability (for sufficiently small $p$).
+
+//   2. *Approximation bound:* For codes with girth $g >= 6$ and maximum degree $Delta = max(l, q)$, if BP converges, the output $bold(e)^"BP"$ satisfies:
+//   $ |bold(e)^"BP"| <= (1 + epsilon(g, Delta)) dot |bold(e)^*| $
+//   where $epsilon(g, Delta) arrow.r 0$ as $g arrow.r infinity$ for fixed $Delta$.
+
+//   3. *Iteration complexity:* BP requires $O(g)$ iterations to propagate information across the shortest cycle.
+// ]
+
+// #proof[
+//   *Part 1 (Local optimality):* Consider an error $bold(e)^*$ with $|bold(e)^*| < g\/2$. In the factor graph, the neighborhood of radius $r = floor(g\/2) - 1$ around any error bit is a tree (no cycles within distance $r$). Within this tree neighborhood:
+//   - BP computes exact marginals (by Theorem 1)
+//   - The error bits are separated by distance $>= g\/2$
+//   - No interference between error regions
+
+//   Therefore, BP correctly identifies each error bit independently, giving $bold(e)^"BP" = bold(e)^*$.
+
+//   *Part 2 (Approximation bound):* For $|bold(e)^*| >= g\/2$, cycles create dependencies. The approximation error comes from:
+//   - *Double-counting:* Evidence circulates through cycles
+//   - *Correlation:* Nearby error bits are not independent
+
+//   For girth $g$, the correlation decays exponentially with distance. The number of length-$g$ cycles through a node is bounded by $Delta^g$. Using the correlation decay lemma for loopy belief propagation, the relative error in log-likelihood ratios is:
+//   $ epsilon(g, Delta) <= C dot Delta^(2-g\/2) $
+//   for some constant $C$. This translates to the weight approximation bound.
+
+//   *Part 3 (Iteration complexity):* Information propagates one edge per iteration. To detect a cycle of length $g$, messages must travel distance $g$, requiring $O(g)$ iterations.
+// ]
+
+// #keypoint[
+//   *Practical implications:*
+//   - Codes with large girth $g$ (e.g., $g >= 8$) allow BP to correct more errors
+//   - Random LDPC codes typically have $g = O(log n)$, giving good BP performance
+//   - Structured codes (e.g., Toric code with $g = 4$) have small girth, leading to BP failures
+//   - The degeneracy problem in quantum codes compounds the cycle problem, making OSD necessary
+// ]
+
+// === Density Evolution Framework
+
+// We now develop the rigorous theoretical foundations that explain *when* and *why* BP converges in different regimes, drawing from asymptotic analysis via density evolution @richardson2001capacity, variational optimization through statistical physics @yedidia2003understanding, and combinatorial failure modes @dolecek2010analysis.
+
+// For infinite-length random LDPC codes, convergence is analyzed through the *density evolution* method @richardson2008modern, which tracks the probability distributions of messages rather than individual message values.
+
+// #definition[
+//   *Cycle-Free Horizon:* For a random LDPC code with block length $n arrow.r infinity$, the *computation tree* of depth $l$ rooted at any edge is the subgraph containing all nodes reachable within $l$ hops. The cycle-free horizon property states:
+//   $ lim_(n arrow.r infinity) bb(P)(text("cycle in depth-")l text(" tree")) = 0 $
+
+//   This means that for any fixed number of iterations $l$, the local neighborhood appears tree-like with probability approaching 1 as $n arrow.r infinity$.
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+
+//     // Root edge
+//     circle((0, 0), radius: 0.15, fill: blue.lighten(60%))
+//     content((0, 0), text(size: 8pt, fill: blue)[root])
+
+//     // Depth 1
+//     for i in range(3) {
+//       let x = (i - 1) * 1.5
+//       circle((x, -1.2), radius: 0.12, fill: red.lighten(70%))
+//       line((0, -0.15), (x, -1.08))
+//     }
+
+//     // Depth 2
+//     for i in range(3) {
+//       for j in range(2) {
+//         let x = (i - 1) * 1.5 + (j - 0.5) * 0.6
+//         let y = -2.2
+//         circle((x, y), radius: 0.1, fill: blue.lighten(60%))
+//         line(((i - 1) * 1.5, -1.32), (x, y + 0.1))
+//       }
+//     }
+
+//     content((0, -3), text(size: 9pt)[Computation tree of depth $l=2$: no cycles])
+//     content((3.5, -1), text(size: 8pt, fill: red)[check nodes])
+//     content((3.5, -1.5), text(size: 8pt, fill: blue)[variable nodes])
+//   }),
+//   caption: [Locally tree-like structure in large random graphs]
+// )
+
+// #keypoint[
+//   The cycle-free horizon is the mathematical justification for applying tree-based convergence proofs to loopy graphs in the asymptotic limit. It explains why BP performs well on long random LDPC codes despite the presence of cycles.
+// ]
+
+// #definition[
+//   *Concentration Theorem:* Let $Z$ be a performance metric (e.g., bit error rate) of BP after $l$ iterations on a code randomly drawn from ensemble $cal(C)(n, lambda, rho)$, where $lambda(x)$ and $rho(x)$ are the variable and check node degree distributions. For any $epsilon > 0$:
+//   $ bb(P)(|Z - bb(E)[Z]| > epsilon) <= e^(-beta n epsilon^2) $
+//   where $beta > 0$ depends on the ensemble parameters.
+
+//   *Interpretation:* As $n arrow.r infinity$, almost all codes in the ensemble perform identically to the ensemble average. Individual code performance concentrates around the mean with exponentially small deviation probability.
+// ]
+
+// #keypoint[
+//   *Concentration visualization:* The performance metric $Z$ concentrates exponentially around its ensemble average $bb(E)[Z]$. For large block length $n$, the probability of deviation greater than $epsilon$ decays as $e^(-beta n epsilon^2)$, meaning almost all codes perform identically to the average.
+// ]
+
+// The proof of the Concentration Theorem uses martingale theory:
+
+// #proof[
+//   *Proof sketch via Doob's Martingale:*
+
+//   1. *Martingale Construction:* View code selection as revealing edges sequentially. Define $Z_i = bb(E)[Z | text("first ") i text(" edges revealed")]$. This forms a Doob martingale: $bb(E)[Z_(i+1) | Z_0, ..., Z_i] = Z_i$.
+
+//   2. *Bounded Differences:* In a sparse graph with maximum degree $Delta$, changing a single edge affects at most $O(Delta^l)$ messages after $l$ iterations. Since $Delta$ is constant and $l$ is fixed, the change in $Z$ is bounded: $|Z_i - Z_(i-1)| <= c\/n$ for some constant $c$.
+
+//   3. *Azuma-Hoeffding Inequality:* For a martingale with bounded differences $|Z_i - Z_(i-1)| <= c_i$:
+//   $ bb(P)(|Z_m - Z_0| > epsilon) <= 2 exp(-(epsilon^2)/(2 sum_(i=1)^m c_i^2)) $
+
+//   4. *Application:* With $m = O(n)$ edges and $c_i = O(1\/n)$, we have $sum c_i^2 = O(1\/n)$, giving:
+//   $ bb(P)(|Z - bb(E)[Z]| > epsilon) <= 2 exp(-(epsilon^2 n)/(2 C)) = e^(-beta n epsilon^2) $
+//   where $beta = 1\/(2C)$.
+// ]
+
+// #theorem("Threshold Theorem")[
+//   For a code ensemble with degree distributions $lambda(x), rho(x)$ and a symmetric channel with noise parameter $sigma$ (e.g., standard deviation for AWGN), there exists a unique *threshold* $sigma^*$ such that:
+
+//   1. If $sigma < sigma^*$ (low noise): As $l arrow.r infinity$, the probability of decoding error $P_e^((l)) arrow.r 0$
+
+//   2. If $sigma > sigma^*$ (high noise): $P_e^((l))$ remains bounded away from zero
+
+//   The threshold is determined by the fixed points of the density evolution recursion:
+//   $ P_(l+1) = Phi(P_l, sigma) $
+//   where $Phi$ is the density update operator combining variable and check node operations.
+// ]
+
+// #keypoint[
+//   *Threshold phenomenon:* There exists a sharp transition at $sigma^*$. Below this threshold (low noise), BP converges to zero error as iterations increase. Above threshold (high noise), errors persist. This sharp phase transition is characteristic of random LDPC ensembles.
+// ]
+
+// #keypoint[
+//   *Why the threshold exists:* The density evolution operator $Phi$ has two competing fixed points:
+//   - *All-correct fixed point:* Messages concentrate at $plus.minus infinity$ (high confidence)
+//   - *Error fixed point:* Messages remain near zero (low confidence)
+
+//   Below threshold, the all-correct fixed point is stable and attracts all trajectories. Above threshold, the error fixed point becomes stable, trapping the decoder.
+// ]
+
+// === Variational Perspective: Bethe Free Energy
+
+// The density evolution framework applies to infinite-length codes. For finite loopy graphs, we need a different lens: *statistical physics* @yedidia2003understanding. This reveals that BP is actually performing *variational optimization* of an energy function.
+
+// #definition[
+//   *Bethe Free Energy:* For a factor graph with variables $bold(x) = (x_1, ..., x_n)$ and factors $psi_a$, let $b_i(x_i)$ be the *belief* (pseudo-marginal) at variable $i$ and $b_a(bold(x)_a)$ be the belief at factor $a$. The Bethe Free Energy is:
+//   $ F_"Bethe"(b) = sum_a sum_(bold(x)_a) b_a(bold(x)_a) E_a(bold(x)_a) - H_"Bethe"(b) $
+
+//   where the *Bethe entropy* approximates the true entropy using local entropies:
+//   $ H_"Bethe" = sum_a H(b_a) + sum_i (1 - d_i) H(b_i) $
+
+//   Here $d_i$ is the degree of variable $i$, and $H(b) = -sum_x b(x) log b(x)$ is the Shannon entropy.
+
+//   *Constraints:* Beliefs must be normalized and *marginally consistent*:
+//   $ sum_(bold(x)_a without x_i) b_a(bold(x)_a) = b_i(x_i) quad "for all" i in a $
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+
+//     // Simple 3-node factor graph
+//     circle((-1.5, 0), radius: 0.15, fill: blue.lighten(60%))
+//     content((-1.5, 0), text(size: 8pt)[$x_1$])
+
+//     circle((1.5, 0), radius: 0.15, fill: blue.lighten(60%))
+//     content((1.5, 0), text(size: 8pt)[$x_2$])
+
+//     rect((-0.15, -0.15), (0.15, 0.15), fill: red.lighten(70%))
+//     content((0, 0), text(size: 8pt)[$psi$])
+
+//     line((-1.35, 0), (-0.15, 0), stroke: gray)
+//     line((0.15, 0), (1.35, 0), stroke: gray)
+
+//     // Entropy terms
+//     content((-1.5, -0.8), text(size: 8pt, fill: blue)[$H(b_1)$])
+//     content((1.5, -0.8), text(size: 8pt, fill: blue)[$H(b_2)$])
+//     content((0, -0.8), text(size: 8pt, fill: red)[$H(b_psi)$])
+
+//     content((0, -1.5), text(size: 9pt)[Bethe entropy: $H_"Bethe" = H(b_psi) + (1-2)H(b_1) + (1-2)H(b_2)$])
+//     content((0, -2), text(size: 8pt)[$(d_1 = d_2 = 2$ for this graph$)$])
+//   }),
+//   caption: [Bethe entropy decomposes global entropy into local terms]
+// )
+
+// #keypoint[
+//   *Intuition:* The Bethe approximation treats each factor independently, summing local entropies. The $(1 - d_i)$ correction prevents double-counting: a variable connected to $d_i$ factors appears in $d_i$ factor entropies, so we subtract $(d_i - 1)$ copies of its individual entropy.
+// ]
+
+// #theorem("Yedidia-Freeman-Weiss")[@yedidia2003understanding
+//   A set of beliefs $\\{b_i, b_a\\}$ is a *fixed point* of the Sum-Product BP algorithm if and only if it is a *stationary point* (critical point) of the Bethe Free Energy $F_"Bethe"(b)$ subject to normalization and marginalization constraints.
+
+//   *Equivalently:* BP performs coordinate descent on the Bethe Free Energy. Each message update corresponds to minimizing $F_"Bethe"$ with respect to one edge's belief.
+// ]
+
+// #proof[
+//   *Proof sketch via Lagrangian:*
+
+//   1. *Constrained optimization:* Form the Lagrangian:
+//   $ cal(L) = F_"Bethe"(b) + sum_(i,a) sum_(x_i) lambda_(i a)(x_i) (b_i(x_i) - sum_(bold(x)_a without x_i) b_a(bold(x)_a)) + "normalization terms" $
+
+//   2. *Stationarity conditions:* Taking $partial cal(L) \/ partial b_a = 0$ and $partial cal(L) \/ partial b_i = 0$:
+//   $ b_a(bold(x)_a) prop psi_a(bold(x)_a) product_(i in a) exp(lambda_(i a)(x_i)) $
+//   $ b_i(x_i) prop product_(a in i) exp(lambda_(a i)(x_i)) $
+
+//   3. *Message identification:* Define messages $mu_(i arrow.r a)(x_i) = exp(lambda_(i a)(x_i))$. Substituting and enforcing marginalization constraints yields exactly the BP update equations:
+//   $ mu_(i arrow.r a)(x_i) prop P(y_i | x_i) product_(a' in i without a) mu_(a' arrow.r i)(x_i) $
+//   $ mu_(a arrow.r i)(x_i) prop sum_(bold(x)_a without x_i) psi_a(bold(x)_a) product_(i' in a without i) mu_(i' arrow.r a)(x_(i')) $
+// ]
+
+// #keypoint[
+//   *Energy landscape interpretation:* BP performs gradient descent on the Bethe Free Energy landscape. On trees, there's a single global minimum (correct solution). On loopy graphs, local minima can trap the decoder, corresponding to incorrect fixed points. The contour lines represent energy levels, with BP trajectories flowing toward minima.
+// ]
+
+// #keypoint[
+//   *Implications for convergence:*
+//   - *On trees:* Bethe approximation is exact ($F_"Bethe" = F_"Gibbs"$), so BP finds the global minimum
+//   - *On loopy graphs:* $F_"Bethe"$ is an approximation. BP finds a local minimum, which may not be the true posterior
+//   - *Stable fixed points* correspond to local minima of $F_"Bethe"$
+//   - *Unstable fixed points* (saddle points) cause oscillations
+
+//   This explains why BP can converge to incorrect solutions: it gets trapped in local minima created by graph cycles.
+// ]
+
+// === Sufficient Conditions for Convergence
+
+// While density evolution guarantees asymptotic convergence and Bethe theory explains fixed points, neither provides *guarantees* for specific finite loopy graphs. We now present rigorous sufficient conditions @ihler2005loopy.
+
+// #definition[
+//   *Dobrushin's Influence Matrix:* For a graphical model, the influence $C_(i j)$ measures the maximum change in the marginal distribution of variable $i$ caused by fixing variable $j$:
+//   $ C_(i j) = sup_(x_j, x_j') ||P(x_i | x_j) - P(x_i | x_j')||_"TV" $
+
+//   where $|| dot ||_"TV"$ is the total variation distance.
+
+//   The *Dobrushin interdependence matrix* $bold(C)$ has entries $C_(i j)$ for $i eq.not j$ and $C_(i i) = 0$.
+// ]
+
+// #theorem("Dobrushin's Uniqueness Condition")[
+//   If the Dobrushin matrix satisfies:
+//   $ ||bold(C)||_infinity = max_i sum_(j eq.not i) C_(i j) < 1 $
+
+//   then:
+//   1. The Gibbs measure has a unique fixed point
+//   2. BP converges exponentially fast to this fixed point from any initialization
+//   3. The convergence rate is $lambda = ||bold(C)||_infinity$
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+
+//     // Small graph example
+//     for i in range(4) {
+//       let angle = i * 90deg
+//       let x = 1.5 * calc.cos(angle)
+//       let y = 1.5 * calc.sin(angle)
+//       circle((x, y), radius: 0.15, fill: blue.lighten(60%))
+//       content((x, y), text(size: 8pt)[$x_#(i+1)$])
+//     }
+
+//     // Edges
+//     for i in range(4) {
+//       let angle1 = i * 90deg
+//       let angle2 = calc.rem(i + 1, 4) * 90deg
+//       let x1 = 1.5 * calc.cos(angle1)
+//       let y1 = 1.5 * calc.sin(angle1)
+//       let x2 = 1.5 * calc.cos(angle2)
+//       let y2 = 1.5 * calc.sin(angle2)
+//       line((x1, y1), (x2, y2), stroke: gray)
+//     }
+
+//     // Influence matrix
+//     content((0, -2.5), text(size: 9pt)[Example: 4-cycle with weak coupling])
+//     content((0, -3), text(size: 8pt)[$||bold(C)||_infinity = max_i sum_j C_(i j) = 2 dot 0.3 = 0.6 < 1$ ✓])
+//   }),
+//   caption: [Dobrushin condition: information dissipates through the graph]
+// )
+
+// #keypoint[
+//   *Limitation for LDPC codes:* Error correction codes are designed to *propagate* information over long distances. Parity checks impose hard constraints (infinite coupling strength). Therefore, useful LDPC codes typically *violate* Dobrushin's condition.
+
+//   While sufficient, Dobrushin's condition is far from necessary. It applies mainly to high-noise regimes where correlations are weak.
+// ]
+
+// #theorem("Contraction Mapping Convergence")[
+//   View BP as a mapping $bold(T): cal(M) arrow.r cal(M)$ on the space of messages. If $bold(T)$ is a *contraction* under some metric $d$:
+//   $ d(bold(T)(bold(m)), bold(T)(bold(m'))) <= lambda dot d(bold(m), bold(m')) $
+//   with Lipschitz constant $lambda < 1$, then:
+
+//   1. BP has a unique fixed point $bold(m)^*$
+//   2. BP converges geometrically: $d(bold(m)^((t)), bold(m)^*) <= lambda^t d(bold(m)^((0)), bold(m)^*)$
+// ]
+
+// #proof[
+//   *Proof:* Direct application of the Banach Fixed Point Theorem. The contraction property ensures:
+//   - *Uniqueness:* If $bold(m)^*$ and $bold(m')^*$ are both fixed points, then:
+//   $ d(bold(m)^*, bold(m')^*) = d(bold(T)(bold(m)^*), bold(T)(bold(m')^*)) <= lambda dot d(bold(m)^*, bold(m')^*) $
+//   Since $lambda < 1$, this implies $d(bold(m)^*, bold(m')^*) = 0$, so $bold(m)^* = bold(m')^*$.
+
+//   - *Convergence:* For any initialization $bold(m)^((0))$:
+//   $ d(bold(m)^((t+1)), bold(m)^*) = d(bold(T)(bold(m)^((t))), bold(T)(bold(m)^*)) <= lambda dot d(bold(m)^((t)), bold(m)^*) $
+//   Iterating gives $d(bold(m)^((t)), bold(m)^*) <= lambda^t d(bold(m)^((0)), bold(m)^*)$.
+// ]
+
+// #keypoint[
+//   *Spectral radius condition:* For binary pairwise models, the contraction constant can be computed from the *spectral radius* of the interaction matrix:
+//   $ rho(bold(A)) < 1, quad "where" A_(i j) = tanh |J_(i j)| $
+
+//   This is sharper than Dobrushin's condition (which corresponds to the $L_infinity$ norm of $bold(A)$).
+// ]
+
+// === Failure Mechanisms: Trapping Sets
+
+// The previous sections explain when BP converges. We now characterize when and why it *fails* @dolecek2010analysis. In the high-SNR regime, BP can get trapped in incorrect fixed points due to specific graph substructures.
+
+// #definition[
+//   *(a,b) Absorbing Set:* A subset $cal(D) subset.eq V$ of $a$ variable nodes is an $(a, b)$ absorbing set if:
+
+//   1. The induced subgraph contains exactly $b$ *odd-degree* check nodes (unsatisfied checks)
+//   2. Every variable node $v in cal(D)$ has *strictly more* even-degree neighbors than odd-degree neighbors in the induced subgraph
+
+//   *Interpretation:* If the variables in $cal(D)$ are in error, each receives more "confirming" messages (from satisfied checks) than "correcting" messages (from unsatisfied checks), causing the decoder to stabilize in the error state.
+// ]
+
+// #figure(
+//   canvas(length: 1cm, {
+//     import draw: *
+
+//     // The canonical (5,3) absorbing set
+//     // 5 variable nodes in a specific configuration
+//     let var_pos = (
+//       (-1.5, 0),
+//       (-0.75, 1),
+//       (0.75, 1),
+//       (1.5, 0),
+//       (0, -0.5)
+//     )
+
+//     // Variable nodes
+//     for (i, pos) in var_pos.enumerate() {
+//       circle(pos, radius: 0.15, fill: red.lighten(40%))
+//       content(pos, text(size: 7pt, fill: white, weight: "bold")[$v_#(i+1)$])
+//     }
+
+//     // Check nodes (3 odd-degree, others even-degree)
+//     let check_pos = (
+//       (-1.1, 0.5),   // odd
+//       (0, 0.7),      // odd
+//       (1.1, 0.5),    // odd
+//       (-0.5, -0.8),  // even (degree 2)
+//       (0.5, -0.8)    // even (degree 2)
+//     )
+
+//     for (i, pos) in check_pos.enumerate() {
+//       let color = if i < 3 { rgb("#ff8800") } else { rgb("#00cc00") }
+//       rect((pos.at(0) - 0.12, pos.at(1) - 0.12), (pos.at(0) + 0.12, pos.at(1) + 0.12),
+//            fill: color.lighten(60%))
+//       content(pos, text(size: 6pt)[$c_#(i+1)$])
+//     }
+
+//     // Edges (simplified connectivity)
+//     line(var_pos.at(0), check_pos.at(0))
+//     line(var_pos.at(1), check_pos.at(0))
+//     line(var_pos.at(1), check_pos.at(1))
+//     line(var_pos.at(2), check_pos.at(1))
+//     line(var_pos.at(2), check_pos.at(2))
+//     line(var_pos.at(3), check_pos.at(2))
+//     line(var_pos.at(4), check_pos.at(3))
+//     line(var_pos.at(0), check_pos.at(3))
+//     line(var_pos.at(4), check_pos.at(4))
+//     line(var_pos.at(3), check_pos.at(4))
+
+//     content((0, -1.8), text(size: 9pt, fill: red)[5 error variables (red)])
+//     content((0, -2.2), text(size: 9pt, fill: rgb("#ff8800"))[3 odd-degree checks (orange)])
+//     content((0, -2.6), text(size: 9pt, fill: rgb("#00cc00"))[Even-degree checks (green)])
+//     content((0, -3.2), text(size: 8pt)[Canonical $(5,3)$ absorbing set: each variable has $>=2$ even neighbors])
+//   }),
+//   caption: [The $(5,3)$ absorbing set: a stable error configuration]
+// )
+
+// #keypoint[
+//   *Why BP gets trapped:*
+//   1. *Majority vote:* Each variable node performs a weighted majority vote of its check neighbors
+//   2. *Satisfied checks dominate:* In an absorbing set, satisfied checks (even degree) outnumber unsatisfied checks (odd degree) for each variable
+//   3. *Reinforcement loop:* Satisfied checks send messages that *confirm* the error state, while unsatisfied checks send weak correction signals
+//   4. *Stable fixed point:* The configuration becomes a local minimum of the Bethe Free Energy
+
+//   This is the primary cause of *error floors* in LDPC codes: at high SNR, rare noise patterns that activate absorbing sets dominate the error probability.
+// ]
+
+// #theorem("Absorbing Sets and Error Floors")[
+//   For an LDPC code with minimum absorbing set size $(a_"min", b_"min")$, the error floor is dominated by:
+//   $ P_"error" approx binom(n, a_"min") dot p^(a_"min") dot (1-p)^(n-a_"min") dot P_"trap" $
+
+//   where $P_"trap"$ is the probability that BP fails to correct the absorbing set configuration.
+
+//   *Implication:* Error floor height is determined by the *size* and *multiplicity* of small absorbing sets. Code design focuses on eliminating small absorbing sets.
+// ]
+
+// #pagebreak()
+
+
+// = Minimum Weight Perfect Matching (MWPM) Decoder
+
+// == Maximum Likelihood Decoding and MWPM
+
+// Maximum Likelihood Decoding (MLD) seeks the most probable error pattern $bold(e)$ given syndrome $bold(s)$ and error probabilities $p(bold(e))$.
+
+// #definition[
+//   *Maximum Likelihood Decoding Problem:* Given parity check matrix $bold(H) in bb(F)_2^(m times n)$, syndrome $bold(s) in bb(F)_2^m$, and error weights $w_i = ln((1-p_i)/p_i)$, find:
+//   $ min_(bold(c) in bb(F)_2^n) sum_(i in [n]) w_i c_i quad "subject to" quad bold(H) bold(c) = bold(s) $
+// ]
+
+// For certain code structures, MLD can be efficiently reduced to a graph matching problem.
+
+// #theorem("MLD to MWPM Reduction")[
+//   If every column of $bold(H)$ has at most 2 non-zero elements (each error triggers at most 2 detectors), then MLD can be deterministically reduced to Minimum Weight Perfect Matching with boundaries in polynomial time.
+// ]
+
+// #definition[
+//   *Detector Graph:* Given $bold(H) in bb(F)_2^(m times n)$, construct graph $G = (V, E)$ where:
+//   - Vertices: $V = [m] union {0}$ (detectors plus boundary vertex)
+//   - Edges: For each column $i$ of $bold(H)$:
+//     - If column $i$ has weight 2 (triggers detectors $x_1, x_2$): edge $(x_1, x_2)$ with weight $w_i$
+//     - If column $i$ has weight 1 (triggers detector $x$): edge $(x, 0)$ with weight $w_i$
+// ]
+
+// #proof[
+//   *Reduction procedure:*
+
+//   1. *Graph construction:* Build detector graph $G$ from $bold(H)$ as defined above. The boundary operator $partial: bb(F)_2^n arrow.r bb(F)_2^(m+1)$ maps edge vectors to vertex vectors, corresponding to the parity check matrix.
+
+//   2. *Syndrome to boundary:* Given syndrome $bold(s) in bb(F)_2^m$, identify the set $D subset.eq V$ of vertices with non-zero syndrome values. This becomes the boundary condition for the matching problem.
+
+//   3. *Shortest path computation:* For all pairs $(u, v)$ where $u, v in D union {0}$, compute shortest paths using Dijkstra's algorithm. This requires $O(|D|^2)$ shortest path computations, constructing a complete weighted graph on $D union {0}$.
+
+//   4. *MWPM with boundary:* Solve MWPM on the complete graph with boundary vertex ${0}$. The solution gives edges whose boundary equals $D$, which corresponds to the minimum weight error pattern satisfying $bold(H) bold(c) = bold(s)$.
+
+//   Since each step is polynomial time, MLD reduces to MWPM in polynomial time.
+// ]
+
+// == The Matching Polytope
+
+// #definition[
+//   *Weighted Perfect Matching:* Given weighted graph $G = (V, E, W)$ where $W = {w_e in bb(R) | e in E}$:
+//   - A *matching* $M subset.eq E$ has no two edges sharing a vertex
+//   - A *perfect matching* covers every vertex in $V$
+//   - The *weight* of matching $M$ is $sum_(e in M) w_e$
+// ]
+
+// The integer programming formulation uses indicator variables $x_e in {0, 1}$:
+
+// $ min_bold(x) sum_(e in E) w_e x_e quad "subject to" quad sum_(e in delta({v})) x_e = 1 space forall v in V, quad x_e in {0, 1} $
+
+// where $delta({v})$ denotes edges incident to vertex $v$.
+
+// #theorem("Matching Polytope Characterization")[
+//   Define the odd set family $cal(O)(G) = {U subset.eq V : |U| "is odd and" >= 3}$. Let:
+//   $ P_1(G) &= "conv"{bold(x) : x_e in {0,1}, sum_(e in delta({v})) x_e = 1 space forall v in V} \
+//   P_2(G) &= {bold(x) : x_e >= 0, sum_(e in delta({v})) x_e = 1 space forall v in V, sum_(e in delta(U)) x_e >= 1 space forall U in cal(O)(G)} $
+
+//   If edge weights are rational, then $P_1(G) = P_2(G)$.
+
+//   *Implication:* The integer program can be relaxed to a linear program by replacing $x_e in {0,1}$ with $x_e >= 0$ and adding the *blossom constraints* $sum_(e in delta(U)) x_e >= 1$ for all odd sets $U$.
+// ]
+
+// #keypoint[
+//   *Why blossom constraints matter:* An odd set $U$ cannot have a perfect matching using only internal edges (odd number of vertices). Therefore, at least one edge must connect to the outside: $sum_(e in delta(U)) x_e >= 1$. This constraint is necessary and sufficient for the convex hull to equal the integer hull.
+// ]
+
+// == Dual Formulation and Optimality Conditions
+
+// #definition[
+//   *MWPM Dual Problem:* The dual of the MWPM linear program is:
+//   $ max_(bold(y)) sum_(v in V) y_v + sum_(O in cal(O)(G)) y_O $
+//   subject to:
+//   $ lambda_e = w_e - (y_(v_1) + y_(v_2)) - sum_(O: e in delta(O)) y_O >= 0 quad forall e in E \
+//   y_O >= 0 quad forall O in cal(O)(G) $
+
+//   where $lambda_e$ is the *slack* of edge $e$.
+// ]
+
+// #theorem("KKT Complementary Slackness")[
+//   Primal solution $bold(x)$ and dual solution $(bold(y), {y_O})$ are optimal if and only if:
+//   1. *Primal feasibility:* $sum_(e in delta({v})) x_e = 1$, $sum_(e in delta(U)) x_e >= 1$, $x_e >= 0$
+//   2. *Dual feasibility:* $lambda_e >= 0$, $y_O >= 0$
+//   3. *Complementary slackness:*
+//      - $lambda_e x_e = 0$ (tight edges are in matching)
+//      - $y_O (sum_(e in delta(O)) x_e - 1) = 0$ (tight odd sets have positive dual)
+// ]
+
+// == The Blossom Algorithm
+
+// The Blossom algorithm, developed by Edmonds (1965), solves MWPM by maintaining primal and dual feasibility while growing alternating trees.
+
+// #definition[
+//   *Alternating structures:*
+//   - *M-alternating walk:* Path $(v_0, v_1, ..., v_t)$ where edges alternate between $M$ and $E without M$
+//   - *M-augmenting path:* M-alternating walk with both endpoints unmatched
+//   - *M-blossom:* Odd-length cycle in an M-alternating walk where edges alternate in/out of $M$
+// ]
+
+// #keypoint[
+//   *Algorithm overview:*
+
+//   1. *Initialization:* Start with empty matching $M = emptyset$, dual variables $y_v = 0$
+
+//   2. *Main loop:* While $M$ is not perfect:
+//      - *Search:* Find M-alternating walks from unmatched vertices
+//      - *Augment:* If M-augmenting path found, flip edges along path (add unmatched edges, remove matched edges)
+//      - *Shrink:* If M-blossom found, contract it to a single vertex, update dual variables
+//      - *Grow:* If no path/blossom found, increase dual variables to make new edges tight, add to search tree
+//      - *Expand:* When blossom dual variable reaches zero, uncontract it
+
+//   3. *Termination:* When all vertices are matched, return $M$
+// ]
+
+// #theorem("Blossom Algorithm Correctness and Complexity")[
+//   The Blossom algorithm:
+//   1. Maintains primal feasibility, dual feasibility, and complementary slackness throughout
+//   2. Terminates with an optimal MWPM
+//   3. Runs in $O(|V|^3)$ time with careful implementation
+
+//   *Iteration bounds:*
+//   - Augmentations: at most $|V|\/2$
+//   - Contractions: at most $2|V|$
+//   - Expansions: at most $2|V|$
+//   - Edge additions: at most $3|V|$
+//   - Total: $O(|V|^2)$ iterations, each taking $O(|V|)$ time
+// ]
+
+// #keypoint[
+//   *Why MWPM for quantum codes:*
+//   - Surface codes and other topological codes have parity check matrices where each error triggers at most 2 stabilizers
+//   - This structure allows efficient MLD via MWPM
+//   - Blossom algorithm provides polynomial-time optimal decoding
+//   - Practical implementations achieve near-optimal thresholds (~10-11% for surface codes)
+//   - Contrast with BP: MWPM finds global optimum but is slower; BP is faster but can get trapped in local minima
+// ]
+
+// #pagebreak()
+
+= Results and Performance
+
+== Error Threshold
+
+#definition[
+  The *threshold* $p_"th"$ is the maximum physical error rate below which the logical error rate decreases with increasing code distance.
+
+  - If $p < p_"th"$: Larger codes $arrow.r$ exponentially better protection
+  - If $p > p_"th"$: Larger codes $arrow.r$ worse protection (error accumulates faster than correction)
+]
+
+For rotated surface codes under circuit-level depolarizing noise, the theoretical threshold is approximately *0.7%* @acharya2024quantum.
+
+== Threshold Plots
+
+The threshold behavior is visualized by plotting logical error rate versus physical error rate for different code distances. At the threshold, curves for different distances *cross*.
+
+#figure(
+  image("../outputs/threshold_plot.png", width: 80%),
+  caption: [Logical error rate vs. physical error rate for rotated surface codes ($d = 3, 5, 7$). The crossing point indicates the threshold $p_"th" approx 0.7%$.]
+)
+
+Below threshold, increasing distance $d$ exponentially suppresses the logical error rate:
+$ p_L approx A (p / p_"th")^((d+1)/2) $
+
+#figure(
+  image("../outputs/threshold_comparison.png", width: 80%),
+  caption: [Comparison of BP+OSD decoder performance across different code distances. Error bars show statistical uncertainty from finite sampling.]
+)
+
+== BP Failure and OSD Recovery
+
+The following plots demonstrate why OSD post-processing is essential for quantum codes:
+
+#grid(
+  columns: 2,
+  gutter: 1em,
+  figure(
+    image("../docs/images/bp_failure_demo.png", width: 100%),
+    caption: [BP alone fails due to degeneracy: the decoder outputs an invalid solution that does not satisfy the syndrome.]
+  ),
+  figure(
+    image("../docs/images/osd_success_demo.png", width: 100%),
+    caption: [BP+OSD successfully decodes: OSD resolves the split belief by forcing a unique valid solution via matrix inversion.]
+  )
+)
+
+== Reference Results from Literature
+
+For comparison, the original BP+OSD paper @roffe2020decoding reports thresholds for phenomenological noise:
+
+#figure(
+  table(
+    columns: 4,
+    align: center,
+    stroke: 0.5pt,
+    [*Code Family*], [*BP Only*], [*BP+OSD-0*], [*BP+OSD-CS*],
+    [Toric], [N/A (fails)], [$9.2%$], [$bold(9.9%)$],
+    [Semi-topological], [N/A (fails)], [$9.1%$], [$bold(9.7%)$],
+    [Random QLDPC], [$6.5%$], [$6.7%$], [$bold(7.1%)$],
+  ),
+  caption: [Thresholds under phenomenological noise @roffe2020decoding. Circuit-level thresholds are typically lower ($0.5$--$1%$).]
+)
+
+== Complexity Analysis
+
+#figure(
+  table(
+    columns: 3,
+    align: (left, center, left),
+    stroke: 0.5pt,
+    [*Component*], [*Complexity*], [*Notes*],
+    [BP (per iteration)], [$O(n)$], [Linear in block length],
+    [OSD-0], [$O(n^3)$], [Dominated by Gaussian elimination],
+    [OSD-$w$ combination sweep], [$O(binom(lambda, w))$], [$lambda approx 60$, $w = 2$ gives ~1770 trials],
+    [*Total (OSD-0)*], [$O(n^3)$], [Practical for $n < 10^4$],
+  ),
+  caption: [Complexity analysis of BP+OSD decoder]
+)
+
+#keypoint[
+  *Practical performance:* For a distance-$d$ rotated surface code with $n = d^2$ data qubits:
+  - $d = 3$: $n = 9$, decoding time $< 1$ ms
+  - $d = 7$: $n = 49$, decoding time $tilde 10$ ms  
+  - $d = 15$: $n = 225$, decoding time $tilde 1$ s
+]
+
+#pagebreak()
+
 = Summary
 
 == Key Takeaways
@@ -3732,6 +3559,7 @@ The computational complexity of tropical tensor network contraction is governed 
 )
 
 #pagebreak()
+
 
 = References
 
