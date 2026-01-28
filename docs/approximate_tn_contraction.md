@@ -273,6 +273,92 @@ For surface codes with depolarizing noise below threshold:
 | Exact TN | O(2^tw) | Optimal | Full |
 | MPS (χ) | O(n·χ³) | Approximate | Full |
 
+## Current Status and Benchmark Results
+
+### Scalability Achievement
+
+The primary goal of enabling d=5 computation has been achieved:
+
+| Distance | Exact Method | Approximate (sweep χ=32) |
+|----------|--------------|--------------------------|
+| d = 3    | ✓ ~50ms/sample | ✓ ~12ms/sample |
+| d = 5    | ✗ OOM (>16GB) | ✓ ~120ms/sample |
+| d = 7    | ✗ Intractable | Expected: ✓ ~500ms/sample |
+
+### Benchmark Results (Rotated Surface Code, Circuit-Level Noise)
+
+**Logical Error Rate Comparison:**
+
+| d | p | BP+OSD | Sweep χ=32 | Notes |
+|---|---|--------|------------|-------|
+| 3 | 0.003 | 0.010 | 0.020 | |
+| 3 | 0.007 | 0.040 | 0.140 | |
+| 5 | 0.003 | 0.000 | 0.070 | |
+| 5 | 0.007 | 0.030 | 0.270 | |
+
+**Decoding Time (ms/sample):**
+
+| d | BP+OSD | Sweep χ=32 |
+|---|--------|------------|
+| 3 | 4-5 ms | 12-15 ms |
+| 5 | 19-20 ms | 118-125 ms |
+
+### Current Limitations
+
+The approximate contraction methods successfully reduce memory requirements but have
+limitations in the current implementation:
+
+1. **Assignment Recovery Incomplete**: The backtracking through truncated MPS/MPO
+   is not fully implemented. Current version returns partial assignments based on
+   available backpointers, leading to high logical error rates.
+
+2. **MPS Method Bug**: The `boundary_contract` method has a tensor dimension mismatch
+   in certain configurations. The `sweep` method is more robust.
+
+3. **No Threshold Estimation**: Due to incomplete assignment recovery, threshold
+   estimation for tropical TN decoder is not yet possible.
+
+### Recommended Usage
+
+| Use Case | Recommended Method |
+|----------|-------------------|
+| Production decoding | BP+OSD |
+| d=3 exact inference | Tropical TN (exact) |
+| d≥5 partition function | Tropical TN (approximate) |
+| Research/benchmarking | BP+OSD or MWPM |
+
+### Future Work
+
+To achieve full functionality, the following improvements are needed:
+
+1. **Complete Backpointer Tracking**: Implement full backpointer storage during
+   MPS truncation to enable correct assignment recovery.
+
+2. **Iterative Refinement**: Add local search to improve approximate assignments.
+
+3. **Hybrid Approach**: Use approximate contraction for initial estimate, then
+   refine with belief propagation.
+
+4. **Bug Fixes**: Fix tensor dimension issues in the MPS boundary contraction.
+
+## Comparison: BP+OSD vs Tropical TN
+
+| Aspect | BP+OSD | Tropical TN (Exact) | Tropical TN (Approx) |
+|--------|--------|--------------------|--------------------|
+| **Time Complexity** | O(n·k²) per iter | O(2^tw) | O(n·χ³) |
+| **Space Complexity** | O(n·k) | O(2^tw) | O(n·χ²) |
+| **Scalability** | Any distance | d ≤ 3 | Any distance |
+| **Optimality** | Heuristic | Optimal MAP | Approximate |
+| **Degeneracy** | Partial (via OSD) | Full | Full (approx) |
+| **Implementation** | Mature | Mature | In development |
+| **Recommended** | ✓ Production | Research only | Future |
+
+Where:
+- n = number of variables (errors)
+- k = average variable degree
+- tw = tree width of factor graph
+- χ = bond dimension (approximation parameter)
+
 ## References
 
 1. **Bravyi, Suchara, Vargo (2014)**
