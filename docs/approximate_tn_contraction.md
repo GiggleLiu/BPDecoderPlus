@@ -619,6 +619,100 @@ assignment, score, info = mpe_tropical_approximate(
 3. **Syndrome-aware contraction**: Incorporate constraints during contraction
 4. **Hybrid approach**: Use TN for marginals, OSD for solution search
 
+## Why Tropical TN Still Lacks Threshold Behavior
+
+### Root Cause Analysis
+
+Even with syndrome projection, the tropical TN decoder doesn't exhibit proper threshold
+behavior (where LER decreases with increasing distance d below threshold). Here's why:
+
+#### 1. Chi vs Valid Solution Space Mismatch
+
+```
+Configuration space analysis (d=3):
+- Total configurations: 2^78 ≈ 3×10^23
+- Each constraint kills 50% (parity constraint)
+- 24 constraints → valid configs: 2^78 × 0.5^24 ≈ 2^54 ≈ 10^16
+- Our chi: 32-64 configurations kept during sweep!
+```
+
+**The fundamental problem**: We keep O(chi) configurations but there are O(2^54) valid solutions.
+The optimal solution is almost certainly discarded during approximate contraction.
+
+#### 2. Constraint Factor Structure
+
+```python
+# In UAI model, constraint factors encode:
+# - Valid parity (matches syndrome): 1.0 → log(1.0) = 0
+# - Invalid parity: 1e-30 → log(1e-30) = -69
+
+# Example constraint factor values (tropical/log space):
+[-69.08, 0.0, 0.0, -69.08, 0.0, -69.08, -69.08, 0.0, ...]
+```
+
+The constraints ARE properly encoded, but approximate contraction discards
+valid low-probability configurations in favor of invalid high-probability ones.
+
+#### 3. Why BP+OSD Avoids This Problem
+
+| Aspect | BP+OSD | Tropical TN |
+|--------|--------|-------------|
+| Message complexity | O(edges × iterations) | O(chi × tensors) |
+| Constraint handling | Implicit in messages | Explicit tensor entries |
+| Valid solution search | OSD: O(2^order) around BP estimate | Greedy projection |
+| Memory | O(variables × max_degree) | O(chi × max_tensor_dim) |
+
+BP naturally propagates constraint satisfaction through messages, while TN must
+explicitly contract constraint tensors and loses valid solutions during truncation.
+
+### Can Splitting/Hyperedge Merging Help?
+
+**Short answer: No, it addresses a different problem.**
+
+`split_by_separator` and `merge_hyperedges` in BP+OSD:
+- **Purpose**: Reduce matrix size and handle time boundaries
+- **Effect**: Creates smaller H matrix (78 vs ~200 columns for d=3)
+- **Benefit**: Faster BP iterations, not better constraint handling
+
+The tropical TN already uses these optimizations. The issue is fundamental to
+how TN contraction handles constraints vs how BP message passing handles them.
+
+### The Real Solution: Tropical Belief Propagation
+
+Instead of tensor network contraction, implement BP in the tropical (max-plus) semiring:
+
+```python
+# Standard BP (sum-product):
+# message_v→c = Σ_other (product of incoming messages)
+# message_c→v = Σ_other (f_c × product of incoming messages)
+
+# Tropical BP (max-product):  
+# message_v→c = max_other (sum of incoming messages)  # sum because log space
+# message_c→v = max_other (f_c + sum of incoming messages)
+```
+
+**Advantages of Tropical BP**:
+1. O(edges) complexity like standard BP
+2. Naturally handles high-degree constraint factors
+3. No explicit tensor contraction or truncation
+4. Messages stay bounded (no exponential blowup)
+
+### Conclusion
+
+The tropical TN approach is fundamentally limited for circuit-level noise decoding:
+
+| Issue | Impact | Solution |
+|-------|--------|----------|
+| Chi too small | Optimal solution discarded | Tropical BP (no truncation) |
+| Greedy truncation | Valid configs lost | Constraint-aware truncation |
+| Post-hoc projection | Can't recover lost solution | In-loop constraint enforcement |
+
+**Recommendation**: For production QEC decoding, use BP+OSD. The tropical TN approach
+is better suited for:
+- Small codes (d ≤ 3) with exact contraction
+- Research into tensor network methods
+- Problems with low tree-width factor graphs
+
 ## Comparison: BP+OSD vs Tropical TN
 
 | Aspect | BP+OSD | Tropical TN (Exact) | Tropical TN (Approx) |
