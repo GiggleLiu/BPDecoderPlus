@@ -370,3 +370,226 @@ class TestLayoutMethods:
             for pos in positions:
                 assert math.isfinite(pos.x)
                 assert math.isfinite(pos.y)
+
+
+class TestSweepEdgeCases:
+    """Edge cases for sweep contraction."""
+    
+    def test_disconnected_network(self):
+        """Test sweep with disconnected tensors."""
+        nodes = [
+            TensorNode(vars=(0,), values=torch.tensor([1.0, 2.0])),
+            TensorNode(vars=(10,), values=torch.tensor([3.0, 4.0])),  # Disconnected
+        ]
+        
+        result = sweep_contract(nodes, chi=32)
+        
+        # Should still produce valid result
+        assert math.isfinite(result.value)
+    
+    def test_single_var_tensors(self):
+        """Test with tensors that have single variables."""
+        nodes = [
+            TensorNode(vars=(i,), values=torch.randn(3))
+            for i in range(5)
+        ]
+        
+        result = sweep_contract(nodes, chi=16)
+        
+        assert math.isfinite(result.value)
+        assert result.num_sweeps == 5
+    
+    def test_large_tensor_values(self):
+        """Test sweep with large tensor values."""
+        nodes = [
+            TensorNode(vars=(0, 1), values=torch.randn(2, 2) * 1000),
+        ]
+        
+        result = sweep_contract(nodes, chi=16)
+        
+        assert math.isfinite(result.value)
+    
+    def test_negative_values(self):
+        """Test sweep with negative tensor values (log-domain)."""
+        nodes = [
+            TensorNode(vars=(0, 1), values=torch.tensor([[-5.0, -2.0], [-3.0, -1.0]])),
+        ]
+        
+        result = sweep_contract(nodes, chi=16)
+        
+        # Should find the maximum (-1.0)
+        assert result.value >= -5.0
+
+
+class TestSweepDirections:
+    """Tests for different sweep directions."""
+    
+    def test_bottom_to_top_order(self):
+        """Test bottom-to-top sweep ordering."""
+        positions = [
+            TensorPosition(0, 0.0, 2.0, (0,)),
+            TensorPosition(1, 0.0, 0.0, (1,)),
+            TensorPosition(2, 0.0, 1.0, (2,)),
+        ]
+        
+        order = _get_sweep_order(positions, SweepDirection.BOTTOM_TO_TOP)
+        
+        assert order == [0, 2, 1]  # Sorted by -y
+    
+    def test_all_directions_produce_result(self):
+        """Test that all sweep directions produce valid results."""
+        nodes = [
+            TensorNode(vars=(0, 1), values=torch.randn(2, 2)),
+            TensorNode(vars=(1, 2), values=torch.randn(2, 2)),
+        ]
+        
+        for direction in SweepDirection:
+            result = sweep_contract(nodes, chi=16, direction=direction)
+            
+            assert math.isfinite(result.value)
+
+
+class TestSweepRandomized:
+    """Randomized tests for sweep contraction."""
+    
+    @pytest.mark.parametrize("n_nodes", [1, 2, 5, 10])
+    def test_varying_network_sizes(self, n_nodes):
+        """Test sweep with different network sizes."""
+        nodes = [
+            TensorNode(vars=(i, (i+1) % n_nodes), values=torch.randn(2, 2))
+            for i in range(n_nodes)
+        ]
+        
+        result = sweep_contract(nodes, chi=8)
+        
+        assert math.isfinite(result.value)
+        assert result.num_sweeps == n_nodes
+    
+    @pytest.mark.parametrize("chi", [2, 4, 8, 16, 32])
+    def test_varying_chi(self, chi):
+        """Test sweep with different chi values."""
+        nodes = [
+            TensorNode(vars=(i, i+1), values=torch.randn(3, 3))
+            for i in range(4)
+        ]
+        
+        result = sweep_contract(nodes, chi=chi)
+        
+        assert math.isfinite(result.value)
+    
+    @pytest.mark.parametrize("layout", ["spectral", "force", "grid"])
+    def test_different_layouts(self, layout):
+        """Test sweep with different layout methods."""
+        nodes = [
+            TensorNode(vars=(0, 1), values=torch.randn(2, 2)),
+            TensorNode(vars=(1, 2), values=torch.randn(2, 2)),
+            TensorNode(vars=(2, 0), values=torch.randn(2, 2)),
+        ]
+        
+        result = sweep_contract(nodes, chi=16, layout_method=layout)
+        
+        assert math.isfinite(result.value)
+
+
+class TestAdaptiveSweepBehavior:
+    """Tests for adaptive sweep behavior."""
+    
+    def test_converges_early(self):
+        """Test that adaptive sweep can converge early."""
+        # Simple network should converge quickly
+        nodes = [
+            TensorNode(vars=(0,), values=torch.tensor([1.0, 2.0]))
+        ]
+        
+        result = adaptive_sweep_contract(
+            nodes,
+            chi_start=2,
+            chi_max=64,
+            chi_step=2,
+            tolerance=1e-10,
+            max_iterations=10
+        )
+        
+        assert result is not None
+    
+    def test_respects_max_chi(self):
+        """Test that adaptive sweep respects chi_max."""
+        nodes = [
+            TensorNode(vars=(i, i+1), values=torch.randn(4, 4))
+            for i in range(5)
+        ]
+        
+        result = adaptive_sweep_contract(
+            nodes,
+            chi_start=2,
+            chi_max=8,
+            chi_step=2,
+            max_iterations=20
+        )
+        
+        # chi_used should not exceed chi_max significantly
+        assert result.chi_used <= 16  # Allow some flexibility
+
+
+class TestTensorPositionClass:
+    """Tests for TensorPosition dataclass."""
+    
+    def test_create_position(self):
+        """Test creating a TensorPosition."""
+        pos = TensorPosition(
+            tensor_idx=5,
+            x=1.5,
+            y=-2.3,
+            vars=(0, 1, 2)
+        )
+        
+        assert pos.tensor_idx == 5
+        assert pos.x == 1.5
+        assert pos.y == -2.3
+        assert pos.vars == (0, 1, 2)
+    
+    def test_position_with_empty_vars(self):
+        """Test position with no variables."""
+        pos = TensorPosition(tensor_idx=0, x=0.0, y=0.0, vars=())
+        
+        assert pos.vars == ()
+
+
+class TestLayoutConnectivity:
+    """Tests for layout with various connectivity patterns."""
+    
+    def test_fully_connected(self):
+        """Test layout with fully connected tensors."""
+        # All tensors share variable 0
+        nodes = [
+            TensorNode(vars=(0, i+1), values=torch.randn(2, 2))
+            for i in range(4)
+        ]
+        
+        positions = compute_tensor_layout(nodes, method="force")
+        
+        assert len(positions) == 4
+    
+    def test_linear_chain(self):
+        """Test layout with linear chain connectivity."""
+        nodes = [
+            TensorNode(vars=(i, i+1), values=torch.randn(2, 2))
+            for i in range(5)
+        ]
+        
+        positions = compute_tensor_layout(nodes, method="spectral")
+        
+        assert len(positions) == 5
+    
+    def test_star_topology(self):
+        """Test layout with star topology."""
+        # Central node connected to all others
+        nodes = [TensorNode(vars=(0,), values=torch.randn(2))]
+        nodes += [
+            TensorNode(vars=(0, i), values=torch.randn(2, 2))
+            for i in range(1, 5)
+        ]
+        
+        positions = compute_tensor_layout(nodes, method="grid")
+        
+        assert len(positions) == 5

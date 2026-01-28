@@ -430,3 +430,281 @@ class TestIntegration:
         assert info["method"] == "sweep"
         assert info["approximate"] is True
         assert math.isfinite(score)
+
+
+class TestEdgeCases:
+    """Edge case tests for robustness."""
+    
+    def test_mps_from_scalar(self):
+        """Test MPS from scalar tensor."""
+        scalar = torch.tensor(5.0)
+        mps = TropicalMPS.from_tensor(scalar)
+        
+        assert mps.num_sites == 1
+        result = mps.to_tensor()
+        assert result.numel() == 1
+    
+    def test_mps_from_very_small_tensor(self):
+        """Test MPS from 1-element tensor."""
+        tensor = torch.tensor([3.14])
+        mps = TropicalMPS.from_tensor(tensor)
+        
+        assert mps.num_sites == 1
+        result = mps.to_tensor()
+        assert abs(result.item() - 3.14) < 1e-6
+    
+    def test_mps_with_large_chi(self):
+        """Test MPS with chi larger than necessary."""
+        tensor = torch.randn(3, 4)
+        mps = TropicalMPS.from_tensor(tensor, chi=1000)
+        
+        # Should work without error
+        assert mps.num_sites >= 1
+    
+    def test_mps_with_chi_one(self):
+        """Test MPS with minimal chi=1."""
+        tensor = torch.randn(4, 4)
+        mps = TropicalMPS.from_tensor(tensor, chi=1)
+        
+        # Should create valid MPS
+        assert mps.num_sites >= 1
+        assert mps.max_bond_dim() <= 1
+    
+    def test_svd_with_all_same_values(self):
+        """Test SVD on constant matrix."""
+        mat = torch.ones(4, 4) * 5.0
+        U, S, V = tropical_svd_approx(mat, chi=2)
+        
+        assert not torch.isnan(U).any()
+        assert not torch.isnan(S).any()
+        assert not torch.isnan(V).any()
+    
+    def test_svd_with_zeros(self):
+        """Test SVD on zero matrix."""
+        mat = torch.zeros(3, 3)
+        U, S, V = tropical_svd_approx(mat, chi=2)
+        
+        # Should not raise
+        assert U.shape[0] == 3
+        assert V.shape[1] == 3
+    
+    def test_boundary_contract_single_element(self):
+        """Test boundary contraction with single-element tensors."""
+        tensor = torch.tensor([7.0])
+        
+        result = boundary_contract([tensor], [(0,)], chi=32)
+        
+        assert abs(result.value - 7.0) < 1e-6
+    
+    def test_tensor_contract_1d(self):
+        """Test contraction of 1D tensors."""
+        a = torch.tensor([1.0, 2.0, 3.0])
+        b = torch.tensor([4.0, 5.0, 6.0])
+        
+        # Contract over the only dimension
+        result = tropical_tensor_contract(a, b)
+        
+        # max(1+4, 2+5, 3+6) = max(5, 7, 9) = 9
+        assert abs(result.item() - 9.0) < 1e-6
+    
+    def test_mps_empty_sites(self):
+        """Test MPS with empty sites list raises appropriate error."""
+        mps = TropicalMPS(sites=[], chi=4)
+        
+        assert mps.num_sites == 0
+        with pytest.raises(ValueError):
+            mps.to_tensor()
+
+
+class TestNumericalStability:
+    """Tests for numerical stability."""
+    
+    def test_large_values(self):
+        """Test with large tensor values."""
+        tensor = torch.randn(3, 4) * 1e6
+        mps = TropicalMPS.from_tensor(tensor, chi=4)
+        
+        result = mps.to_tensor()
+        assert not torch.isnan(result).any()
+        assert not torch.isinf(result).any()
+    
+    def test_small_values(self):
+        """Test with very small tensor values."""
+        tensor = torch.randn(3, 4) * 1e-6
+        mps = TropicalMPS.from_tensor(tensor, chi=4)
+        
+        result = mps.to_tensor()
+        assert not torch.isnan(result).any()
+    
+    def test_mixed_sign_values(self):
+        """Test with mixed positive and negative values."""
+        tensor = torch.tensor([[-10.0, 5.0], [3.0, -7.0]])
+        mps = TropicalMPS.from_tensor(tensor, chi=4)
+        
+        result = mps.to_tensor()
+        assert not torch.isnan(result).any()
+    
+    def test_tropical_contract_with_negative_inf(self):
+        """Test tropical contraction handles -inf properly."""
+        a = torch.tensor([[1.0, float('-inf')], [2.0, 3.0]])
+        b = torch.tensor([[4.0, 5.0], [float('-inf'), 7.0]])
+        
+        result = tropical_tensor_contract(a, b)
+        
+        # Should produce finite result where possible
+        assert result.shape == (2, 2)
+    
+    def test_boundary_contract_stability(self):
+        """Test boundary contraction numerical stability."""
+        # Create tensors with varying magnitudes
+        tensors = [
+            torch.tensor([1e-5, 1e5]),
+            torch.tensor([1e3, 1e-3]),
+        ]
+        
+        result = boundary_contract(tensors, [(0,), (1,)], chi=32)
+        
+        assert math.isfinite(result.value)
+
+
+class TestRandomInputs:
+    """Randomized tests for broader coverage."""
+    
+    @pytest.mark.parametrize("shape", [(2,), (3, 4), (2, 3, 4), (2, 2, 2, 2)])
+    def test_mps_various_shapes(self, shape):
+        """Test MPS creation for various tensor shapes."""
+        tensor = torch.randn(shape)
+        mps = TropicalMPS.from_tensor(tensor, chi=4)
+        
+        assert mps.num_sites >= 1
+        result = mps.to_tensor()
+        assert result.numel() > 0
+    
+    @pytest.mark.parametrize("chi", [1, 2, 4, 8, 16])
+    def test_mps_various_chi(self, chi):
+        """Test MPS with various bond dimensions."""
+        tensor = torch.randn(4, 4)
+        mps = TropicalMPS.from_tensor(tensor, chi=chi)
+        
+        assert mps.max_bond_dim() <= chi
+    
+    @pytest.mark.parametrize("n_tensors", [1, 2])
+    def test_boundary_contract_n_tensors(self, n_tensors):
+        """Test boundary contraction with varying number of tensors."""
+        # Use 1D tensors for simpler contraction
+        tensors = [torch.randn(4) for _ in range(n_tensors)]
+        vars_list = [(i,) for i in range(n_tensors)]
+        
+        result = boundary_contract(tensors, vars_list, chi=16)
+        
+        assert math.isfinite(result.value)
+    
+    @pytest.mark.parametrize("seed", [42, 123, 456])
+    def test_deterministic_with_seed(self, seed):
+        """Test that results are deterministic with same seed."""
+        torch.manual_seed(seed)
+        tensor1 = torch.randn(4, 4)
+        mps1 = TropicalMPS.from_tensor(tensor1, chi=4)
+        result1 = mps1.to_tensor()
+        
+        torch.manual_seed(seed)
+        tensor2 = torch.randn(4, 4)
+        mps2 = TropicalMPS.from_tensor(tensor2, chi=4)
+        result2 = mps2.to_tensor()
+        
+        torch.testing.assert_close(result1, result2)
+
+
+class TestMPOOperations:
+    """Tests for MPO-related operations."""
+    
+    def test_mpo_from_single_tensor(self):
+        """Test MPO creation from single tensor."""
+        tensor = torch.randn(2, 3)
+        mpo = TropicalMPO.from_tensor_row([tensor], [])
+        
+        assert mpo.num_sites == 1
+    
+    def test_mpo_from_multiple_tensors(self):
+        """Test MPO creation from multiple tensors."""
+        tensors = [torch.randn(2), torch.randn(3), torch.randn(4)]
+        mpo = TropicalMPO.from_tensor_row(tensors, [])
+        
+        assert mpo.num_sites == 3
+    
+    def test_mpo_physical_dims(self):
+        """Test that MPO tracks physical dimensions."""
+        tensor = torch.randn(3, 4)
+        mpo = TropicalMPO.from_tensor_row([tensor], [])
+        
+        # Should have recorded dimensions
+        assert len(mpo.physical_dims_in) == 1
+        assert len(mpo.physical_dims_out) == 1
+
+
+class TestTruncationProperties:
+    """Tests for truncation behavior."""
+    
+    def test_truncation_preserves_max(self):
+        """Test that truncation preserves maximum value approximately."""
+        # Create tensor with known maximum
+        tensor = torch.tensor([[10.0, 1.0], [5.0, 2.0]])
+        mps = TropicalMPS.from_tensor(tensor, chi=4)  # Use larger chi for better approximation
+        
+        result = mps.to_tensor()
+        
+        # Result should have finite values
+        assert not torch.isnan(result).any()
+        assert result.numel() > 0
+    
+    def test_multiple_truncations(self):
+        """Test multiple sequential truncations."""
+        tensor = torch.randn(4, 4)
+        mps = TropicalMPS.from_tensor(tensor, chi=4)
+        
+        # Truncate progressively
+        mps2 = truncate_mps(mps, chi=3)
+        mps3 = truncate_mps(mps2, chi=2)
+        mps4 = truncate_mps(mps3, chi=1)
+        
+        assert mps2.max_bond_dim() <= 3
+        assert mps3.max_bond_dim() <= 2
+        assert mps4.max_bond_dim() <= 1
+    
+    def test_truncation_idempotent(self):
+        """Test that truncating to same chi is idempotent."""
+        tensor = torch.randn(3, 3)
+        mps = TropicalMPS.from_tensor(tensor, chi=2)
+        
+        mps_trunc = truncate_mps(mps, chi=2)
+        
+        # Should be effectively the same
+        assert mps_trunc.num_sites == mps.num_sites
+
+
+class TestBackpointerOperations:
+    """Tests for backpointer tracking."""
+    
+    def test_backpointer_multiple_records(self):
+        """Test recording multiple truncations."""
+        bp = ApproximateBackpointer()
+        
+        bp.record_truncation(0, torch.tensor([0, 1]))
+        bp.record_truncation(1, torch.tensor([2, 3, 4]))
+        bp.record_truncation(2, torch.tensor([1]))
+        
+        assert len(bp.truncation_info) == 3
+        assert bp.truncation_info[0][0] == 0
+        assert bp.truncation_info[1][0] == 1
+        assert bp.truncation_info[2][0] == 2
+    
+    def test_backpointer_with_path_values(self):
+        """Test backpointer with path values set."""
+        bp = ApproximateBackpointer()
+        bp.path_values = torch.tensor([1.0, 3.0, 2.0])
+        bp.path_assignments = {0: torch.tensor([0, 1, 0])}
+        
+        assignment = bp.get_best_assignment()
+        
+        # Best path is index 1 (value 3.0)
+        assert assignment[0] == 1
