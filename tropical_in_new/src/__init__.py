@@ -7,7 +7,7 @@ from .contraction import (
     contract_tree,
     get_omeco_tree,
 )
-from .mpe import mpe_tropical, recover_mpe_assignment
+from .mpe import mpe_tropical, mpe_tropical_approximate, recover_mpe_assignment
 from .network import TensorNode, build_network
 from .primitives import safe_log
 from .tropical_einsum import (
@@ -26,11 +26,32 @@ from .utils import (
     read_model_from_string,
 )
 
+# Approximate contraction methods
+from .approximate import (
+    TropicalMPS,
+    TropicalMPO,
+    boundary_contract,
+    tropical_svd_approx,
+    truncate_mps,
+    ApproximateBackpointer,
+    BoundaryContractionResult,
+)
+from .sweep import (
+    sweep_contract,
+    multi_direction_sweep,
+    adaptive_sweep_contract,
+    SweepDirection,
+    SweepContractionResult,
+    estimate_required_chi,
+)
+
 __all__ = [
+    # Core types
     "Backpointer",
     "Factor",
     "TensorNode",
     "UAIModel",
+    # Exact contraction
     "argmax_trace",
     "build_contraction_tree",
     "build_network",
@@ -48,4 +69,19 @@ __all__ = [
     "safe_log",
     "tropical_einsum",
     "tropical_reduce_max",
+    # Approximate contraction
+    "TropicalMPS",
+    "TropicalMPO",
+    "boundary_contract",
+    "tropical_svd_approx",
+    "truncate_mps",
+    "ApproximateBackpointer",
+    "BoundaryContractionResult",
+    "sweep_contract",
+    "multi_direction_sweep",
+    "adaptive_sweep_contract",
+    "SweepDirection",
+    "SweepContractionResult",
+    "estimate_required_chi",
+    "mpe_tropical_approximate",
 ]
