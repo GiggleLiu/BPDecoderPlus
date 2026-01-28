@@ -161,6 +161,8 @@ def mpe_tropical_approximate(
     evidence: Dict[int, int] | None = None,
     method: Literal["mps", "sweep"] = "mps",
     chi: Optional[int] = None,
+    refine: bool = True,
+    refine_method: Literal["local_search", "coordinate_descent"] = "coordinate_descent",
 ) -> tuple[Dict[int, int], float, Dict[str, int | tuple[int, ...]]]:
     """Approximate MPE using MPS-based contraction methods.
     
@@ -176,6 +178,10 @@ def mpe_tropical_approximate(
             - "sweep": Sweep line contraction (Chubb style)
         chi: Maximum bond dimension. Higher values give better accuracy
              but use more memory. If None, auto-selects based on problem size.
+        refine: Whether to refine the approximate assignment using local search.
+        refine_method: Refinement method to use:
+            - "local_search": Greedy single-variable flipping
+            - "coordinate_descent": Optimize each variable given others fixed
              
     Returns:
         Tuple of (assignment, score, info) where:
@@ -188,7 +194,12 @@ def mpe_tropical_approximate(
         >>> assignment, score, info = mpe_tropical_approximate(model, chi=32)
         >>> print(f"Bond dimension used: {info['chi_used']}")
     """
-    from .approximate import boundary_contract, BoundaryContractionResult
+    from .approximate import (
+        boundary_contract,
+        BoundaryContractionResult,
+        refine_assignment_local_search,
+        refine_assignment_coordinate_descent,
+    )
     from .sweep import sweep_contract, multi_direction_sweep, estimate_required_chi
     
     evidence = evidence or {}
@@ -229,6 +240,27 @@ def mpe_tropical_approximate(
     else:
         raise ValueError(f"Unknown approximate method: {method}")
     
+    # Ensure all variables have an assignment (fill missing with 0)
+    all_vars = set()
+    for node in nodes:
+        all_vars.update(node.vars)
+    for var in all_vars:
+        if var not in assignment:
+            assignment[var] = 0
+    
+    # Refine assignment using local search
+    refined = False
+    if refine and assignment:
+        if refine_method == "local_search":
+            assignment, score = refine_assignment_local_search(
+                assignment, nodes, max_iterations=100
+            )
+        elif refine_method == "coordinate_descent":
+            assignment, score = refine_assignment_coordinate_descent(
+                assignment, nodes, max_sweeps=10
+            )
+        refined = True
+    
     # Add evidence back to assignment
     assignment.update({int(k): int(v) for k, v in evidence.items()})
     
@@ -239,6 +271,7 @@ def mpe_tropical_approximate(
         "chi": chi,
         "chi_used": chi_used,
         "approximate": True,
+        "refined": refined,
     }
     
     return assignment, score, info

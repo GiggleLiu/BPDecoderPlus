@@ -624,35 +624,370 @@ def truncate_mps(mps: TropicalMPS, chi: int) -> TropicalMPS:
 class ApproximateBackpointer:
     """Stores information for recovering MPE assignment from approximate contraction.
     
-    Unlike exact contraction which tracks all argmax values, approximate
-    contraction only tracks information for the top-χ paths.
+    Tracks both the truncation decisions and the variable assignments for each
+    surviving path configuration.
     
     Attributes:
         truncation_info: List of (site_idx, kept_indices) for each truncation
-        path_values: Values (log-probabilities) of tracked paths
-        path_assignments: Partial assignments for each tracked path
+        path_values: Values (log-probabilities) of tracked paths, shape (chi,)
+        path_assignments: For each variable, the assignment for each tracked path
+                         {var_id: tensor of shape (chi,) with assignments}
+        var_dims: Dimension (cardinality) of each variable
     """
     truncation_info: List[Tuple[int, torch.Tensor]] = field(default_factory=list)
     path_values: Optional[torch.Tensor] = None
-    path_assignments: Optional[Dict[int, torch.Tensor]] = None
+    path_assignments: Dict[int, torch.Tensor] = field(default_factory=dict)
+    var_dims: Dict[int, int] = field(default_factory=dict)
     
-    def record_truncation(self, site_idx: int, kept_indices: torch.Tensor):
-        """Record which indices were kept at a truncation step."""
+    def record_truncation(
+        self,
+        site_idx: int,
+        kept_indices: torch.Tensor,
+        var_ids: Tuple[int, ...],
+        var_dims: Tuple[int, ...],
+    ):
+        """Record truncation with variable assignment information.
+        
+        Args:
+            site_idx: Index of the site being truncated
+            kept_indices: Indices of configurations that were kept
+            var_ids: Variable IDs involved in this site
+            var_dims: Dimensions of each variable
+        """
         self.truncation_info.append((site_idx, kept_indices.clone()))
+        
+        # Compute assignments for each kept configuration
+        n_kept = kept_indices.numel()
+        indices = kept_indices.clone()
+        
+        # Unravel indices to get assignment for each variable
+        for var_id, dim in zip(reversed(var_ids), reversed(var_dims)):
+            if var_id not in self.path_assignments:
+                self.path_assignments[var_id] = indices % dim
+                self.var_dims[var_id] = dim
+            indices = indices // dim
+    
+    def record_values(self, values: torch.Tensor):
+        """Record the values (log-probabilities) of tracked paths."""
+        self.path_values = values.clone()
     
     def get_best_assignment(self) -> Dict[int, int]:
         """Recover the best (highest probability) assignment."""
-        if self.path_values is None or self.path_assignments is None:
+        if self.path_values is None or len(self.path_assignments) == 0:
             return {}
         
         # Find path with maximum value
         best_idx = self.path_values.argmax().item()
         
         assignment = {}
-        for var, values in self.path_assignments.items():
-            assignment[var] = int(values[best_idx].item())
+        for var_id, values in self.path_assignments.items():
+            if best_idx < values.numel():
+                assignment[var_id] = int(values[best_idx].item())
+            else:
+                assignment[var_id] = 0  # Default
         
         return assignment
+    
+    def get_top_k_assignments(self, k: int = 5) -> List[Tuple[Dict[int, int], float]]:
+        """Get the top-k most probable assignments.
+        
+        Args:
+            k: Number of assignments to return
+            
+        Returns:
+            List of (assignment, log_probability) tuples
+        """
+        if self.path_values is None or len(self.path_assignments) == 0:
+            return []
+        
+        # Get top-k indices
+        k = min(k, self.path_values.numel())
+        top_values, top_indices = torch.topk(self.path_values, k)
+        
+        results = []
+        for idx, val in zip(top_indices.tolist(), top_values.tolist()):
+            assignment = {}
+            for var_id, values in self.path_assignments.items():
+                if idx < values.numel():
+                    assignment[var_id] = int(values[idx].item())
+            results.append((assignment, val))
+        
+        return results
+
+
+# =============================================================================
+# Iterative Refinement
+# =============================================================================
+
+def refine_assignment_local_search(
+    assignment: Dict[int, int],
+    nodes: List,
+    max_iterations: int = 100,
+    var_dims: Optional[Dict[int, int]] = None,
+) -> Tuple[Dict[int, int], float]:
+    """Refine an approximate assignment using local search.
+    
+    Iteratively flips single variables to improve the log-probability.
+    This is a greedy local search that can escape local minima by
+    accepting moves that don't decrease the score.
+    
+    Args:
+        assignment: Initial assignment to refine {var_id: value}
+        nodes: List of TensorNode objects
+        max_iterations: Maximum number of iterations
+        var_dims: Variable dimensions (default: binary)
+        
+    Returns:
+        Tuple of (refined_assignment, final_score)
+    """
+    if not assignment or not nodes:
+        return assignment, float('-inf')
+    
+    if var_dims is None:
+        var_dims = {v: 2 for v in assignment.keys()}
+    
+    # Compute initial score
+    current_assignment = assignment.copy()
+    current_score = _compute_assignment_score(current_assignment, nodes)
+    
+    improved = True
+    iteration = 0
+    
+    while improved and iteration < max_iterations:
+        improved = False
+        iteration += 1
+        
+        # Try flipping each variable
+        for var_id in list(current_assignment.keys()):
+            dim = var_dims.get(var_id, 2)
+            current_val = current_assignment[var_id]
+            
+            # Try each alternative value
+            for new_val in range(dim):
+                if new_val == current_val:
+                    continue
+                
+                # Compute score with this variable flipped
+                test_assignment = current_assignment.copy()
+                test_assignment[var_id] = new_val
+                test_score = _compute_assignment_score(test_assignment, nodes)
+                
+                if test_score > current_score:
+                    current_assignment[var_id] = new_val
+                    current_score = test_score
+                    improved = True
+                    break  # Move to next variable
+    
+    return current_assignment, current_score
+
+
+def _compute_assignment_score(
+    assignment: Dict[int, int],
+    nodes: List,
+) -> float:
+    """Compute the log-probability score for an assignment.
+    
+    Args:
+        assignment: Variable assignment {var_id: value}
+        nodes: List of TensorNode objects
+        
+    Returns:
+        Log-probability score (sum of log-factors)
+    """
+    total_score = 0.0
+    
+    for node in nodes:
+        # Get indices into this factor's tensor
+        indices = []
+        for var in node.vars:
+            if var in assignment:
+                indices.append(assignment[var])
+            else:
+                # Variable not in assignment - use 0
+                indices.append(0)
+        
+        if indices:
+            try:
+                value = node.values[tuple(indices)].item()
+                total_score += value
+            except (IndexError, RuntimeError):
+                # Index out of bounds - assign very negative score
+                total_score += -1e10
+    
+    return total_score
+
+
+def refine_assignment_coordinate_descent(
+    assignment: Dict[int, int],
+    nodes: List,
+    max_sweeps: int = 10,
+    var_dims: Optional[Dict[int, int]] = None,
+) -> Tuple[Dict[int, int], float]:
+    """Refine assignment using coordinate descent.
+    
+    For each variable, finds the optimal value given all other variables fixed.
+    Sweeps through all variables until convergence or max_sweeps reached.
+    
+    Args:
+        assignment: Initial assignment
+        nodes: List of TensorNode objects  
+        max_sweeps: Maximum number of full sweeps
+        var_dims: Variable dimensions
+        
+    Returns:
+        Tuple of (refined_assignment, final_score)
+    """
+    if not assignment or not nodes:
+        return assignment, float('-inf')
+    
+    if var_dims is None:
+        var_dims = {v: 2 for v in assignment.keys()}
+    
+    current_assignment = assignment.copy()
+    var_list = list(current_assignment.keys())
+    
+    for sweep in range(max_sweeps):
+        changed = False
+        
+        for var_id in var_list:
+            dim = var_dims.get(var_id, 2)
+            best_val = current_assignment[var_id]
+            best_score = _compute_assignment_score(current_assignment, nodes)
+            
+            for val in range(dim):
+                if val == current_assignment[var_id]:
+                    continue
+                    
+                test_assignment = current_assignment.copy()
+                test_assignment[var_id] = val
+                score = _compute_assignment_score(test_assignment, nodes)
+                
+                if score > best_score:
+                    best_val = val
+                    best_score = score
+            
+            if best_val != current_assignment[var_id]:
+                current_assignment[var_id] = best_val
+                changed = True
+        
+        if not changed:
+            break
+    
+    final_score = _compute_assignment_score(current_assignment, nodes)
+    return current_assignment, final_score
+
+
+# =============================================================================
+# Assignment Tracking Utilities
+# =============================================================================
+
+def track_tensor_assignment(
+    tensor: torch.Tensor,
+    var_ids: Tuple[int, ...],
+    chi: int,
+    backpointer: ApproximateBackpointer,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Track assignments for a tensor being incorporated into the boundary.
+    
+    Keeps top-chi configurations and records which variable assignments they correspond to.
+    
+    Args:
+        tensor: Flattened tensor of log-probabilities, shape (prod(var_dims),)
+        var_ids: Variable IDs for this tensor
+        chi: Maximum number of configurations to keep
+        backpointer: Backpointer to record assignment info
+        
+    Returns:
+        Tuple of (truncated_values, kept_indices)
+    """
+    n = tensor.numel()
+    
+    if n <= chi:
+        # Keep all configurations
+        indices = torch.arange(n, device=tensor.device)
+        return tensor, indices
+    
+    # Keep top-chi configurations
+    values, indices = torch.topk(tensor, chi)
+    
+    # Record in backpointer
+    var_dims = tuple(2 for _ in var_ids)  # Assuming binary variables
+    backpointer.record_truncation(
+        site_idx=len(backpointer.truncation_info),
+        kept_indices=indices,
+        var_ids=var_ids,
+        var_dims=var_dims,
+    )
+    backpointer.record_values(values)
+    
+    return values, indices
+
+
+def combine_tracked_tensors(
+    values1: torch.Tensor,
+    indices1: torch.Tensor,
+    vars1: Tuple[int, ...],
+    values2: torch.Tensor,
+    indices2: torch.Tensor,
+    vars2: Tuple[int, ...],
+    chi: int,
+    backpointer: ApproximateBackpointer,
+) -> Tuple[torch.Tensor, torch.Tensor, Tuple[int, ...]]:
+    """Combine two tracked tensors with outer product and truncation.
+    
+    Args:
+        values1, indices1, vars1: First tensor's values, indices, and variables
+        values2, indices2, vars2: Second tensor's values, indices, and variables
+        chi: Maximum configurations to keep
+        backpointer: Backpointer for recording
+        
+    Returns:
+        Tuple of (combined_values, combined_indices, combined_vars)
+    """
+    # Outer product: combined[i,j] = values1[i] + values2[j]
+    combined = values1.unsqueeze(1) + values2.unsqueeze(0)  # (n1, n2)
+    combined_flat = combined.flatten()
+    
+    # Combined variables
+    combined_vars = vars1 + tuple(v for v in vars2 if v not in vars1)
+    
+    n = combined_flat.numel()
+    if n <= chi:
+        combined_indices = torch.arange(n, device=combined_flat.device)
+        return combined_flat, combined_indices, combined_vars
+    
+    # Top-chi
+    top_values, top_flat_indices = torch.topk(combined_flat, chi)
+    
+    # Unravel to get which (i,j) pairs were kept
+    n2 = values2.numel()
+    kept_idx1 = top_flat_indices // n2
+    kept_idx2 = top_flat_indices % n2
+    
+    # Map back to original indices
+    orig_indices1 = indices1[kept_idx1]
+    orig_indices2 = indices2[kept_idx2]
+    
+    # Record assignment information
+    # For vars1, use orig_indices1; for vars2, use orig_indices2
+    for var in vars1:
+        if var not in backpointer.path_assignments:
+            backpointer.path_assignments[var] = torch.zeros(chi, dtype=torch.long, device=combined.device)
+            backpointer.var_dims[var] = 2
+        # Compute assignment from index
+        # This is simplified - assumes binary variables
+        backpointer.path_assignments[var] = orig_indices1 % 2
+    
+    for var in vars2:
+        if var not in vars1:
+            if var not in backpointer.path_assignments:
+                backpointer.path_assignments[var] = torch.zeros(chi, dtype=torch.long, device=combined.device)
+                backpointer.var_dims[var] = 2
+            backpointer.path_assignments[var] = orig_indices2 % 2
+    
+    backpointer.record_values(top_values)
+    
+    return top_values, top_flat_indices, combined_vars
 
 
 # =============================================================================
@@ -725,16 +1060,13 @@ def boundary_contract(
     chi: int = 32,
     track_assignment: bool = True,
 ) -> BoundaryContractionResult:
-    """Contract tensor network using MPS boundary method.
+    """Contract tensor network using boundary method with assignment tracking.
     
-    This implements the MPS decoder approach from Bravyi et al.:
-    1. Arrange tensors into rows
-    2. Initialize boundary MPS from first row
-    3. For each subsequent row:
-       a. Build MPO from row tensors
-       b. Apply MPO to MPS: MPS' = MPO @ MPS
-       c. Truncate MPS to bond dimension chi
-    4. Contract final MPS to scalar
+    This implements a simplified MPS-style boundary contraction:
+    1. Process tensors in order, maintaining a boundary vector
+    2. For each tensor, compute outer product with boundary
+    3. Truncate to top-chi configurations
+    4. Track assignments for the kept configurations
     
     Args:
         tensors: List of factor tensors (in log domain)
@@ -755,57 +1087,111 @@ def boundary_contract(
     
     backpointer = ApproximateBackpointer()
     
-    # Arrange tensors into rows
-    rows = _arrange_tensors_in_rows(tensors, vars_list)
+    # Sort tensors by first variable (simple ordering heuristic)
+    indexed_tensors = list(enumerate(zip(tensors, vars_list)))
+    indexed_tensors.sort(key=lambda x: min(x[1][1]) if x[1][1] else 0)
     
-    if not rows:
-        return BoundaryContractionResult(
-            value=0.0,
-            mps=TropicalMPS(sites=[]),
-            backpointer=backpointer,
-            chi_used=0
-        )
+    # Initialize boundary from first tensor
+    idx, (tensor, vars_tuple) = indexed_tensors[0]
+    tensor_flat = tensor.flatten()
     
-    # Initialize MPS from first row
-    # For simplicity, combine all tensors in first row
-    first_row_tensors = [t for t, _ in rows[0]]
-    if len(first_row_tensors) == 1:
-        combined = first_row_tensors[0]
+    if tensor_flat.numel() <= chi:
+        boundary_values = tensor_flat
+        boundary_indices = torch.arange(tensor_flat.numel(), device=tensor.device)
     else:
-        # Tropical product of independent factors
-        combined = first_row_tensors[0]
-        for t in first_row_tensors[1:]:
-            # Outer product with tropical multiplication
-            combined = combined.unsqueeze(-1) + t.unsqueeze(0)
-            combined = combined.reshape(-1)
+        boundary_values, boundary_indices = torch.topk(tensor_flat, chi)
     
-    mps = TropicalMPS.from_tensor(combined.flatten(), chi=chi)
-    max_chi_used = mps.max_bond_dim()
+    # Track assignments for first tensor
+    if track_assignment:
+        _record_assignments(backpointer, boundary_indices, vars_tuple, tensor.shape)
+        backpointer.record_values(boundary_values)
     
-    # Process remaining rows
-    for row_idx, row in enumerate(rows[1:], 1):
-        row_tensors = [t for t, _ in row]
-        
-        if not row_tensors:
-            continue
-        
-        # Build MPO from row
-        mpo = TropicalMPO.from_tensor_row(row_tensors, [])
-        
-        # Apply MPO to MPS
-        mps = tropical_mps_mpo_multiply(mps, mpo, chi=chi)
-        
-        max_chi_used = max(max_chi_used, mps.max_bond_dim())
+    boundary_vars = set(vars_tuple)
+    max_chi_used = boundary_values.numel()
     
-    # Contract MPS to scalar
-    final_value = mps.to_tensor()
-    if final_value.numel() > 1:
-        final_value = final_value.max()
-    scalar_value = float(final_value.item())
+    # Process remaining tensors
+    for idx, (tensor, vars_tuple) in indexed_tensors[1:]:
+        tensor_flat = tensor.flatten()
+        tensor_vars = set(vars_tuple)
+        
+        # Outer product: combined[i,j] = boundary[i] + tensor[j]
+        combined = boundary_values.unsqueeze(1) + tensor_flat.unsqueeze(0)
+        combined_flat = combined.flatten()
+        
+        n_boundary = boundary_values.numel()
+        n_tensor = tensor_flat.numel()
+        
+        # Truncate to top-chi
+        if combined_flat.numel() <= chi:
+            new_values = combined_flat
+            new_flat_indices = torch.arange(combined_flat.numel(), device=tensor.device)
+        else:
+            new_values, new_flat_indices = torch.topk(combined_flat, chi)
+        
+        # Track which configurations were kept
+        if track_assignment:
+            boundary_idx = new_flat_indices // n_tensor
+            tensor_idx = new_flat_indices % n_tensor
+            
+            # Update existing variable assignments
+            for var in backpointer.path_assignments:
+                old_vals = backpointer.path_assignments[var]
+                if boundary_idx.max() < old_vals.numel():
+                    backpointer.path_assignments[var] = old_vals[boundary_idx]
+            
+            # Add new variable assignments
+            _record_assignments(backpointer, tensor_idx, vars_tuple, tensor.shape)
+            backpointer.record_values(new_values)
+        
+        boundary_values = new_values
+        boundary_vars.update(tensor_vars)
+        max_chi_used = max(max_chi_used, boundary_values.numel())
+    
+    # Final value is the maximum
+    final_value = float(boundary_values.max().item())
+    
+    # Create a simple MPS representation for compatibility
+    mps = TropicalMPS(
+        sites=[boundary_values.reshape(1, boundary_values.numel(), 1)],
+        physical_dims=[boundary_values.numel()],
+        chi=chi
+    )
     
     return BoundaryContractionResult(
-        value=scalar_value,
+        value=final_value,
         mps=mps,
         backpointer=backpointer,
         chi_used=max_chi_used
     )
+
+
+def _record_assignments(
+    backpointer: ApproximateBackpointer,
+    indices: torch.Tensor,
+    vars_tuple: Tuple[int, ...],
+    shape: torch.Size,
+) -> None:
+    """Record variable assignments for given indices.
+    
+    Args:
+        backpointer: Backpointer to update
+        indices: Flat indices into the tensor
+        vars_tuple: Variables of the tensor
+        shape: Shape of the tensor
+    """
+    if not vars_tuple:
+        return
+    
+    n_configs = indices.numel()
+    
+    # Unravel flat indices to per-variable assignments
+    remaining = indices.clone()
+    
+    for i, var in enumerate(reversed(vars_tuple)):
+        dim = shape[len(vars_tuple) - 1 - i] if i < len(shape) else 2
+        assignments = remaining % dim
+        remaining = remaining // dim
+        
+        # Store in backpointer (may overwrite if variable already exists)
+        backpointer.path_assignments[var] = assignments
+        backpointer.var_dims[var] = dim

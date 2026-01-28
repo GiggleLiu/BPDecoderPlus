@@ -271,11 +271,13 @@ class TestApproximateBackpointer:
         bp = ApproximateBackpointer()
         
         indices = torch.tensor([0, 2, 4])
-        bp.record_truncation(0, indices)
+        bp.record_truncation(0, indices, var_ids=(1, 2), var_dims=(2, 2))
         
         assert len(bp.truncation_info) == 1
         assert bp.truncation_info[0][0] == 0
         assert torch.equal(bp.truncation_info[0][1], indices)
+        # Check variable assignments were recorded
+        assert 1 in bp.path_assignments or 2 in bp.path_assignments
     
     def test_get_best_assignment_empty(self):
         """Test getting assignment from empty backpointer."""
@@ -689,9 +691,9 @@ class TestBackpointerOperations:
         """Test recording multiple truncations."""
         bp = ApproximateBackpointer()
         
-        bp.record_truncation(0, torch.tensor([0, 1]))
-        bp.record_truncation(1, torch.tensor([2, 3, 4]))
-        bp.record_truncation(2, torch.tensor([1]))
+        bp.record_truncation(0, torch.tensor([0, 1]), var_ids=(0,), var_dims=(2,))
+        bp.record_truncation(1, torch.tensor([2, 3, 4]), var_ids=(1,), var_dims=(2,))
+        bp.record_truncation(2, torch.tensor([1]), var_ids=(2,), var_dims=(2,))
         
         assert len(bp.truncation_info) == 3
         assert bp.truncation_info[0][0] == 0

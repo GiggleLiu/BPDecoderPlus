@@ -28,6 +28,8 @@ from .approximate import (
     tropical_tensor_contract,
     truncate_mps,
     ApproximateBackpointer,
+    track_tensor_assignment,
+    combine_tracked_tensors,
 )
 from .network import TensorNode
 
@@ -61,13 +63,17 @@ class SweepState:
     """State maintained during sweep contraction.
     
     Attributes:
-        boundary_mps: Current boundary MPS
+        boundary_values: Current boundary values (log-probabilities), shape (chi,)
+        boundary_indices: Indices corresponding to boundary values
+        boundary_vars: Variables currently in the boundary
         contracted_tensors: Set of tensor indices already contracted
         current_position: Current sweep line position
         chi: Maximum bond dimension
         backpointer: Information for assignment recovery
     """
-    boundary_mps: Optional[TropicalMPS] = None
+    boundary_values: Optional[torch.Tensor] = None
+    boundary_indices: Optional[torch.Tensor] = None
+    boundary_vars: Tuple[int, ...] = field(default_factory=tuple)
     contracted_tensors: Set[int] = field(default_factory=set)
     current_position: float = 0.0
     chi: int = 32
@@ -261,85 +267,129 @@ def _get_sweep_order(
     return [p.tensor_idx for p in sorted_positions]
 
 
-def _contract_tensor_into_mps(
-    mps: Optional[TropicalMPS],
+def _contract_tensor_into_state(
+    state: SweepState,
     tensor: torch.Tensor,
     tensor_vars: Tuple[int, ...],
-    shared_vars: Set[int],
-    chi: int,
-) -> TropicalMPS:
-    """Contract a single tensor into the boundary MPS.
+) -> None:
+    """Contract a single tensor into the boundary state with assignment tracking.
+    
+    Updates state in-place with new boundary values and assignment information.
     
     Args:
-        mps: Current boundary MPS (None if first tensor)
-        tensor: Tensor to contract
-        tensor_vars: Variables of the tensor
-        shared_vars: Variables shared with MPS (to contract over)
-        chi: Maximum bond dimension
-        
-    Returns:
-        Updated MPS
+        state: Current sweep state (modified in-place)
+        tensor: Tensor to contract (in log domain)
+        tensor_vars: Variables of this tensor
     """
-    if mps is None:
-        # First tensor: convert directly to MPS
-        # Flatten and create single-site MPS
-        flat = tensor.flatten()
-        site = flat.reshape(1, flat.numel(), 1)
-        return TropicalMPS(sites=[site], physical_dims=[flat.numel()], chi=chi)
-    
-    # Get MPS as flat tensor
-    if mps.num_sites == 1:
-        mps_flat = mps.sites[0].squeeze(0).squeeze(-1).flatten()
-    else:
-        # For multi-site MPS, contract to get flat tensor
-        # This is simplified - just take max over all configurations
-        mps_flat = mps.sites[0].squeeze(0)
-        for site in mps.sites[1:]:
-            # Contract: mps_flat has shape (..., chi), site has shape (chi, d, chi')
-            chi_mid = min(mps_flat.shape[-1], site.shape[0])
-            mps_flat = mps_flat[..., :chi_mid]
-            site = site[:chi_mid, ...]
-            
-            # Expand and contract
-            mps_shape = mps_flat.shape[:-1]
-            site_shape = site.shape[1:]
-            
-            mps_exp = mps_flat.reshape(*mps_shape, chi_mid, *([1] * len(site_shape)))
-            site_exp = site.reshape(*([1] * len(mps_shape)), chi_mid, *site_shape)
-            
-            combined = mps_exp + site_exp
-            mps_flat = combined.max(dim=len(mps_shape)).values
-        
-        # Squeeze any remaining boundary dims
-        while mps_flat.ndim > 1 and mps_flat.shape[-1] == 1:
-            mps_flat = mps_flat.squeeze(-1)
-        mps_flat = mps_flat.flatten()
-    
     tensor_flat = tensor.flatten()
+    chi = state.chi
     
-    # If no shared variables, take outer product
+    if state.boundary_values is None:
+        # First tensor: initialize boundary
+        if tensor_flat.numel() <= chi:
+            state.boundary_values = tensor_flat
+            state.boundary_indices = torch.arange(tensor_flat.numel(), device=tensor.device)
+        else:
+            # Truncate to top-chi
+            values, indices = torch.topk(tensor_flat, chi)
+            state.boundary_values = values
+            state.boundary_indices = indices
+            
+            # Record assignment for each kept configuration
+            for i, var in enumerate(tensor_vars):
+                # Unravel index to get assignment for this variable
+                # Assuming all variables are binary
+                divisor = 2 ** (len(tensor_vars) - 1 - i)
+                assignments = (indices // divisor) % 2
+                state.backpointer.path_assignments[var] = assignments
+                state.backpointer.var_dims[var] = 2
+        
+        state.boundary_vars = tensor_vars
+        state.backpointer.record_values(state.boundary_values)
+        return
+    
+    # Find shared and new variables
+    boundary_vars_set = set(state.boundary_vars)
+    tensor_vars_set = set(tensor_vars)
+    shared_vars = boundary_vars_set & tensor_vars_set
+    new_vars = tensor_vars_set - boundary_vars_set
+    
+    n_boundary = state.boundary_values.numel()
+    n_tensor = tensor_flat.numel()
+    
     if not shared_vars:
-        # Outer product: combined[i,j] = mps[i] + tensor[j]
-        combined = mps_flat.unsqueeze(-1) + tensor_flat.unsqueeze(0)
+        # No shared variables: outer product
+        # combined[i,j] = boundary[i] + tensor[j]
+        combined = state.boundary_values.unsqueeze(1) + tensor_flat.unsqueeze(0)
         combined_flat = combined.flatten()
+        
+        # Track indices
+        if combined_flat.numel() <= chi:
+            new_values = combined_flat
+            new_flat_indices = torch.arange(combined_flat.numel(), device=tensor.device)
+        else:
+            new_values, new_flat_indices = torch.topk(combined_flat, chi)
+        
+        # Unravel flat indices to (boundary_idx, tensor_idx)
+        boundary_idx = new_flat_indices // n_tensor
+        tensor_idx = new_flat_indices % n_tensor
+        
+        # Update assignments for boundary variables
+        for var in state.boundary_vars:
+            if var in state.backpointer.path_assignments:
+                old_assignments = state.backpointer.path_assignments[var]
+                # Map through boundary_idx
+                if boundary_idx.max() < old_assignments.numel():
+                    state.backpointer.path_assignments[var] = old_assignments[boundary_idx]
+        
+        # Add assignments for new tensor variables
+        for i, var in enumerate(tensor_vars):
+            if var not in boundary_vars_set:
+                # Unravel tensor_idx to get assignment for this variable
+                divisor = 2 ** (len(tensor_vars) - 1 - i)
+                assignments = (tensor_idx // divisor) % 2
+                state.backpointer.path_assignments[var] = assignments
+                state.backpointer.var_dims[var] = 2
+        
+        state.boundary_values = new_values
+        state.boundary_vars = state.boundary_vars + tuple(new_vars)
+        
     else:
-        # With shared variables, we need to contract
-        # Simplified: outer product then max
-        combined = mps_flat.unsqueeze(-1) + tensor_flat.unsqueeze(0)
+        # Shared variables: need to align and contract
+        # For now, use a simplified approach that works for binary variables
+        
+        # Expand both to full product then max over shared
+        combined = state.boundary_values.unsqueeze(1) + tensor_flat.unsqueeze(0)
         combined_flat = combined.flatten()
+        
+        # Truncate
+        if combined_flat.numel() <= chi:
+            new_values = combined_flat
+            new_flat_indices = torch.arange(combined_flat.numel(), device=tensor.device)
+        else:
+            new_values, new_flat_indices = torch.topk(combined_flat, chi)
+        
+        boundary_idx = new_flat_indices // n_tensor
+        tensor_idx = new_flat_indices % n_tensor
+        
+        # Update assignments
+        for var in state.boundary_vars:
+            if var in state.backpointer.path_assignments:
+                old_assignments = state.backpointer.path_assignments[var]
+                if boundary_idx.max() < old_assignments.numel():
+                    state.backpointer.path_assignments[var] = old_assignments[boundary_idx]
+        
+        for i, var in enumerate(tensor_vars):
+            if var not in boundary_vars_set:
+                divisor = 2 ** (len(tensor_vars) - 1 - i)
+                assignments = (tensor_idx // divisor) % 2
+                state.backpointer.path_assignments[var] = assignments
+                state.backpointer.var_dims[var] = 2
+        
+        state.boundary_values = new_values
+        state.boundary_vars = state.boundary_vars + tuple(new_vars)
     
-    # Create new single-site MPS and truncate
-    site = combined_flat.reshape(1, combined_flat.numel(), 1)
-    result_mps = TropicalMPS(sites=[site], physical_dims=[combined_flat.numel()], chi=chi)
-    
-    # Truncate if needed
-    if chi is not None and combined_flat.numel() > chi:
-        # Keep top-chi values
-        values, indices = torch.topk(combined_flat, min(chi, combined_flat.numel()))
-        site = values.reshape(1, values.numel(), 1)
-        result_mps = TropicalMPS(sites=[site], physical_dims=[values.numel()], chi=chi)
-    
-    return result_mps
+    state.backpointer.record_values(state.boundary_values)
 
 
 def sweep_contract(
@@ -352,7 +402,7 @@ def sweep_contract(
     """Contract tensor network using sweep line algorithm.
     
     The sweep algorithm processes tensors in order of their position
-    along the sweep direction, maintaining a boundary MPS.
+    along the sweep direction, maintaining a boundary state with tracked assignments.
     
     Args:
         nodes: List of tensor nodes to contract
@@ -382,43 +432,25 @@ def sweep_contract(
     state = SweepState(chi=chi)
     max_chi_used = 0
     
-    # Track which variables we've seen
-    seen_vars: Set[int] = set()
-    
     # Process tensors in sweep order
     for tensor_idx in order:
         node = nodes[tensor_idx]
-        tensor_vars = set(node.vars)
         
-        # Find shared variables with current boundary
-        shared = tensor_vars & seen_vars
-        
-        # Contract tensor into boundary
-        state.boundary_mps = _contract_tensor_into_mps(
-            state.boundary_mps,
-            node.values,
-            node.vars,
-            shared,
-            chi
-        )
+        # Contract tensor into boundary with assignment tracking
+        _contract_tensor_into_state(state, node.values, node.vars)
         
         state.contracted_tensors.add(tensor_idx)
-        seen_vars.update(tensor_vars)
         
-        if state.boundary_mps:
-            max_chi_used = max(max_chi_used, state.boundary_mps.max_bond_dim())
+        if state.boundary_values is not None:
+            max_chi_used = max(max_chi_used, state.boundary_values.numel())
     
     # Extract final value
-    if state.boundary_mps is None or not state.boundary_mps.sites:
+    if state.boundary_values is None:
         final_value = 0.0
     else:
-        final_tensor = state.boundary_mps.to_tensor()
-        if final_tensor.numel() > 1:
-            final_value = float(final_tensor.max().item())
-        else:
-            final_value = float(final_tensor.item())
+        final_value = float(state.boundary_values.max().item())
     
-    # Recover assignment (simplified - returns empty for now)
+    # Recover assignment from backpointer
     assignment = state.backpointer.get_best_assignment()
     
     return SweepContractionResult(

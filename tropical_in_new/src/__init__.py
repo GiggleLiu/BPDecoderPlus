@@ -35,6 +35,10 @@ from .approximate import (
     truncate_mps,
     ApproximateBackpointer,
     BoundaryContractionResult,
+    track_tensor_assignment,
+    combine_tracked_tensors,
+    refine_assignment_local_search,
+    refine_assignment_coordinate_descent,
 )
 from .sweep import (
     sweep_contract,

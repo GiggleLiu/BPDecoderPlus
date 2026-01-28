@@ -313,7 +313,8 @@ class TestSweepState:
         """Test initial sweep state."""
         state = SweepState(chi=32)
         
-        assert state.boundary_mps is None
+        assert state.boundary_values is None
+        assert state.boundary_vars == ()
         assert len(state.contracted_tensors) == 0
         assert state.current_position == 0.0
         assert state.chi == 32
