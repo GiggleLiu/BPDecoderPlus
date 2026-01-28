@@ -198,6 +198,32 @@ assignment, score, info = mpe_tropical(model, method="sweep", chi=32)
 assignment, score, info = mpe_tropical(model, method="auto")
 ```
 
+### With Refinement Options
+
+```python
+from tropical_in_new.src import mpe_tropical_approximate
+
+# Default: coordinate descent refinement enabled
+assignment, score, info = mpe_tropical_approximate(
+    model,
+    method="sweep",
+    chi=32,
+    refine=True,  # Default
+    refine_method="coordinate_descent",  # or "local_search"
+)
+
+# Disable refinement for faster (but less accurate) results
+assignment, score, info = mpe_tropical_approximate(
+    model,
+    method="sweep",
+    chi=32,
+    refine=False,
+)
+
+# Check if refinement was applied
+print(f"Refined: {info['refined']}, Chi used: {info['chi_used']}")
+```
+
 ### Advanced Usage
 
 ```python
@@ -208,14 +234,24 @@ from tropical_in_new.src import (
     multi_direction_sweep,
     adaptive_sweep_contract,
     estimate_required_chi,
+    refine_assignment_local_search,
+    refine_assignment_coordinate_descent,
 )
 
 # Estimate required bond dimension
 chi = estimate_required_chi(nodes, target_accuracy=0.99)
 
-# Direct boundary contraction
-result = boundary_contract(tensors, vars_list, chi=32)
+# Direct boundary contraction with assignment tracking
+result = boundary_contract(tensors, vars_list, chi=32, track_assignment=True)
 print(f"Value: {result.value}, Chi used: {result.chi_used}")
+
+# Get best assignment from backpointer
+assignment = result.backpointer.get_best_assignment()
+
+# Get top-5 assignments
+top_assignments = result.backpointer.get_top_k_assignments(k=5)
+for asgn, score in top_assignments:
+    print(f"Score: {score}, Assignment: {asgn}")
 
 # Multi-direction sweep
 result = multi_direction_sweep(nodes, chi=32)
@@ -226,6 +262,11 @@ result = adaptive_sweep_contract(
     chi_start=8,
     chi_max=64,
     chi_step=8,
+)
+
+# Manual refinement
+refined_assignment, refined_score = refine_assignment_coordinate_descent(
+    assignment, nodes, max_sweeps=10
 )
 ```
 
@@ -303,20 +344,41 @@ The primary goal of enabling d=5 computation has been achieved:
 | 3 | 4-5 ms | 12-15 ms |
 | 5 | 19-20 ms | 118-125 ms |
 
-### Current Limitations
+### Implementation Status
 
-The approximate contraction methods successfully reduce memory requirements but have
-limitations in the current implementation:
+The approximate contraction methods have been fully implemented with the following features:
 
-1. **Assignment Recovery Incomplete**: The backtracking through truncated MPS/MPO
-   is not fully implemented. Current version returns partial assignments based on
-   available backpointers, leading to high logical error rates.
+#### Completed Features
 
-2. **MPS Method Bug**: The `boundary_contract` method has a tensor dimension mismatch
-   in certain configurations. The `sweep` method is more robust.
+1. **Complete Backpointer Tracking** ✓
+   - `ApproximateBackpointer` tracks `path_assignments` for each kept configuration
+   - Properly unravels flat indices to per-variable assignments during truncation
+   - `get_best_assignment()` returns the highest probability assignment
+   - `get_top_k_assignments(k)` returns top-k solutions with their scores
 
-3. **No Threshold Estimation**: Due to incomplete assignment recovery, threshold
-   estimation for tropical TN decoder is not yet possible.
+2. **Iterative Refinement** ✓
+   - `refine_assignment_local_search()`: Greedy single-variable flipping
+   - `refine_assignment_coordinate_descent()`: Optimize each variable given others fixed
+   - Enabled by default via `refine=True` parameter in `mpe_tropical_approximate()`
+
+3. **Fixed Boundary Contraction** ✓
+   - Simplified `boundary_contract()` using direct outer product + truncation
+   - Avoids MPS-MPO dimension mismatch issues
+   - Properly tracks assignments through all truncation steps
+
+4. **Updated Sweep Contraction** ✓
+   - `SweepState` uses `boundary_values/boundary_vars` for efficient tracking
+   - `_contract_tensor_into_state()` maintains assignment information
+
+### Current Accuracy
+
+| d | p | BP+OSD | MPS χ=16 | Sweep χ=16 |
+|---|---|--------|----------|------------|
+| 3 | 0.003 | **0.01** | 0.05 | 0.10 |
+| 3 | 0.007 | **0.04** | 0.17 | 0.23 |
+| 3 | 0.01 | **0.09** | 0.28 | 0.33 |
+| 5 | 0.003 | **0.00** | 0.07 | 0.07 |
+| 5 | 0.007 | **0.03** | ~0.20 | ~0.20 |
 
 ### Recommended Usage
 
@@ -324,22 +386,25 @@ limitations in the current implementation:
 |----------|-------------------|
 | Production decoding | BP+OSD |
 | d=3 exact inference | Tropical TN (exact) |
-| d≥5 partition function | Tropical TN (approximate) |
-| Research/benchmarking | BP+OSD or MWPM |
+| d≥5 research/exploration | Tropical TN (approximate) |
+| Partition function only | Tropical TN (approximate, `refine=False`) |
 
-### Future Work
+### Remaining Challenges
 
-To achieve full functionality, the following improvements are needed:
+The approximate methods produce valid assignments but with higher LER than BP+OSD:
 
-1. **Complete Backpointer Tracking**: Implement full backpointer storage during
-   MPS truncation to enable correct assignment recovery.
+1. **Local Minima**: Coordinate descent refinement can get stuck
+2. **Tensor Ordering**: Heuristic ordering may not be optimal for all graphs
+3. **Truncation Loss**: Information lost during χ truncation affects accuracy
 
-2. **Iterative Refinement**: Add local search to improve approximate assignments.
+### Future Improvements
 
-3. **Hybrid Approach**: Use approximate contraction for initial estimate, then
-   refine with belief propagation.
+To further improve accuracy:
 
-4. **Bug Fixes**: Fix tensor dimension issues in the MPS boundary contraction.
+1. **Simulated Annealing**: Replace greedy refinement with stochastic search
+2. **Graph Partitioning**: Better tensor ordering based on graph structure
+3. **Loopy BP Refinement**: Use belief propagation on the truncated boundary
+4. **Hybrid Approach**: Combine approximate TN with BP+OSD
 
 ## Comparison: BP+OSD vs Tropical TN
 
