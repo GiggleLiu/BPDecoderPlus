@@ -39,6 +39,8 @@ from .approximate import (
     combine_tracked_tensors,
     refine_assignment_local_search,
     refine_assignment_coordinate_descent,
+    refine_assignment_simulated_annealing,
+    project_to_syndrome,
 )
 from .sweep import (
     sweep_contract,

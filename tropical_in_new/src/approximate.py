@@ -716,6 +716,197 @@ class ApproximateBackpointer:
 
 
 # =============================================================================
+# Syndrome Projection
+# =============================================================================
+
+def project_to_syndrome(
+    assignment: Dict[int, int],
+    H: "np.ndarray",
+    syndrome: "np.ndarray",
+    priors: "np.ndarray",
+    max_flips: int = 100,
+) -> Dict[int, int]:
+    """Project assignment to satisfy syndrome constraint H @ x = s (mod 2).
+    
+    Uses greedy flipping based on prior probabilities to find a valid solution
+    that satisfies the syndrome while staying close to the original assignment.
+    
+    Args:
+        assignment: Current assignment {var_id: value}
+        H: Parity check matrix (n_checks, n_vars)
+        syndrome: Target syndrome (n_checks,)
+        priors: Prior error probabilities (n_vars,)
+        max_flips: Maximum number of bit flips allowed
+        
+    Returns:
+        Modified assignment satisfying H @ x = s (mod 2)
+    """
+    import numpy as np
+    
+    n_vars = H.shape[1]
+    
+    # Convert assignment to numpy array (1-indexed to 0-indexed)
+    x = np.zeros(n_vars, dtype=np.int32)
+    for var_id, val in assignment.items():
+        idx = var_id - 1  # Convert to 0-indexed
+        if 0 <= idx < n_vars:
+            x[idx] = val
+    
+    # Compute current syndrome
+    current_syndrome = (H @ x) % 2
+    
+    # Check if already satisfied
+    if np.array_equal(current_syndrome, syndrome.astype(np.int32)):
+        return assignment
+    
+    # Find unsatisfied checks
+    unsatisfied = np.where(current_syndrome != syndrome.astype(np.int32))[0]
+    
+    # Greedy flipping: flip variables that fix most unsatisfied checks
+    # Prioritize flipping variables with higher prior (more likely to be errors)
+    for _ in range(max_flips):
+        if len(unsatisfied) == 0:
+            break
+        
+        best_var = -1
+        best_improvement = 0
+        best_score = float('-inf')
+        
+        for var in range(n_vars):
+            # How many unsatisfied checks would this flip fix?
+            fixes = np.sum(H[unsatisfied, var])
+            # How many satisfied checks would it break?
+            satisfied = np.where(current_syndrome == syndrome.astype(np.int32))[0]
+            breaks = np.sum(H[satisfied, var]) if len(satisfied) > 0 else 0
+            
+            improvement = fixes - breaks
+            
+            # Tie-break using prior probability
+            if x[var] == 0:
+                # Flipping 0->1: prefer higher prior
+                score = np.log(priors[var] + 1e-10)
+            else:
+                # Flipping 1->0: prefer lower prior
+                score = np.log(1 - priors[var] + 1e-10)
+            
+            if improvement > best_improvement or (improvement == best_improvement and score > best_score):
+                best_var = var
+                best_improvement = improvement
+                best_score = score
+        
+        if best_var >= 0 and best_improvement > 0:
+            x[best_var] = 1 - x[best_var]
+            current_syndrome = (H @ x) % 2
+            unsatisfied = np.where(current_syndrome != syndrome.astype(np.int32))[0]
+        else:
+            break
+    
+    # Convert back to assignment dict (0-indexed to 1-indexed)
+    result = {}
+    for i in range(n_vars):
+        result[i + 1] = int(x[i])
+    
+    return result
+
+
+# =============================================================================
+# Simulated Annealing Refinement  
+# =============================================================================
+
+def refine_assignment_simulated_annealing(
+    assignment: Dict[int, int],
+    nodes: List,
+    max_iterations: int = 1000,
+    initial_temp: float = 1.0,
+    final_temp: float = 0.01,
+    var_dims: Optional[Dict[int, int]] = None,
+) -> Tuple[Dict[int, int], float]:
+    """Refine assignment using simulated annealing.
+    
+    Unlike coordinate descent, this can escape local minima by accepting
+    worse solutions with probability proportional to temperature.
+    
+    Args:
+        assignment: Initial assignment
+        nodes: List of TensorNode objects
+        max_iterations: Number of iterations
+        initial_temp: Starting temperature
+        final_temp: Ending temperature
+        var_dims: Variable dimensions
+        
+    Returns:
+        Tuple of (refined_assignment, final_score)
+    """
+    import random
+    import math
+    
+    if not assignment or not nodes:
+        return assignment, float('-inf')
+    
+    if var_dims is None:
+        var_dims = {v: 2 for v in assignment.keys()}
+    
+    current_assignment = assignment.copy()
+    current_score = _compute_assignment_score(current_assignment, nodes)
+    
+    best_assignment = current_assignment.copy()
+    best_score = current_score
+    
+    var_list = list(current_assignment.keys())
+    n_vars = len(var_list)
+    
+    if n_vars == 0:
+        return assignment, current_score
+    
+    # Temperature schedule
+    temp_ratio = (final_temp / initial_temp) ** (1.0 / max_iterations)
+    temp = initial_temp
+    
+    for iteration in range(max_iterations):
+        # Pick random variable
+        var_id = random.choice(var_list)
+        dim = var_dims.get(var_id, 2)
+        current_val = current_assignment[var_id]
+        
+        # Pick random new value
+        if dim == 2:
+            new_val = 1 - current_val
+        else:
+            new_val = random.randint(0, dim - 1)
+            while new_val == current_val:
+                new_val = random.randint(0, dim - 1)
+        
+        # Compute new score
+        test_assignment = current_assignment.copy()
+        test_assignment[var_id] = new_val
+        test_score = _compute_assignment_score(test_assignment, nodes)
+        
+        # Accept or reject
+        delta = test_score - current_score
+        
+        if delta > 0:
+            # Always accept improvements
+            accept = True
+        else:
+            # Accept worse with probability exp(delta/temp)
+            accept_prob = math.exp(delta / temp) if temp > 0 else 0
+            accept = random.random() < accept_prob
+        
+        if accept:
+            current_assignment[var_id] = new_val
+            current_score = test_score
+            
+            if current_score > best_score:
+                best_assignment = current_assignment.copy()
+                best_score = current_score
+        
+        # Cool down
+        temp *= temp_ratio
+    
+    return best_assignment, best_score
+
+
+# =============================================================================
 # Iterative Refinement
 # =============================================================================
 

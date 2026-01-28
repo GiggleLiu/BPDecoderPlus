@@ -162,7 +162,11 @@ def mpe_tropical_approximate(
     method: Literal["mps", "sweep"] = "mps",
     chi: Optional[int] = None,
     refine: bool = True,
-    refine_method: Literal["local_search", "coordinate_descent"] = "coordinate_descent",
+    refine_method: Literal["local_search", "coordinate_descent", "simulated_annealing"] = "coordinate_descent",
+    syndrome_projection: bool = False,
+    H: Optional["np.ndarray"] = None,
+    syndrome: Optional["np.ndarray"] = None,
+    priors: Optional["np.ndarray"] = None,
 ) -> tuple[Dict[int, int], float, Dict[str, int | tuple[int, ...]]]:
     """Approximate MPE using MPS-based contraction methods.
     
@@ -182,6 +186,11 @@ def mpe_tropical_approximate(
         refine_method: Refinement method to use:
             - "local_search": Greedy single-variable flipping
             - "coordinate_descent": Optimize each variable given others fixed
+            - "simulated_annealing": Stochastic optimization with temperature schedule
+        syndrome_projection: Whether to project assignment to satisfy syndrome constraint
+        H: Parity check matrix (required if syndrome_projection=True)
+        syndrome: Target syndrome (required if syndrome_projection=True)
+        priors: Prior error probabilities (required if syndrome_projection=True)
              
     Returns:
         Tuple of (assignment, score, info) where:
@@ -199,6 +208,8 @@ def mpe_tropical_approximate(
         BoundaryContractionResult,
         refine_assignment_local_search,
         refine_assignment_coordinate_descent,
+        refine_assignment_simulated_annealing,
+        project_to_syndrome,
     )
     from .sweep import sweep_contract, multi_direction_sweep, estimate_required_chi
     
@@ -248,7 +259,7 @@ def mpe_tropical_approximate(
         if var not in assignment:
             assignment[var] = 0
     
-    # Refine assignment using local search
+    # Refine assignment using specified method
     refined = False
     if refine and assignment:
         if refine_method == "local_search":
@@ -259,7 +270,28 @@ def mpe_tropical_approximate(
             assignment, score = refine_assignment_coordinate_descent(
                 assignment, nodes, max_sweeps=10
             )
+        elif refine_method == "simulated_annealing":
+            assignment, score = refine_assignment_simulated_annealing(
+                assignment, nodes, max_iterations=1000
+            )
         refined = True
+    
+    # Project to valid syndrome space if requested
+    projected = False
+    if syndrome_projection and H is not None and syndrome is not None and priors is not None:
+        assignment = project_to_syndrome(assignment, H, syndrome, priors)
+        # Recompute score after projection
+        score = 0.0
+        for node in nodes:
+            indices = []
+            for var in node.vars:
+                indices.append(assignment.get(var, 0))
+            if indices:
+                try:
+                    score += node.values[tuple(indices)].item()
+                except (IndexError, RuntimeError):
+                    score += -1e10
+        projected = True
     
     # Add evidence back to assignment
     assignment.update({int(k): int(v) for k, v in evidence.items()})
@@ -272,6 +304,7 @@ def mpe_tropical_approximate(
         "chi_used": chi_used,
         "approximate": True,
         "refined": refined,
+        "projected": projected,
     }
     
     return assignment, score, info
